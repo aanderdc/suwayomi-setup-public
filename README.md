@@ -1,4 +1,4 @@
-# Suwayomi Setup
+# Suwayomi Setup (En desarrollo)
 
 Scripts para instalar y manejar **[Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server)**
 (lector de manga autoalojado) en **Windows** y **macOS** sin escribir comandos: un panel con botones para
