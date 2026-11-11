@@ -1,0 +1,86 @@
+=====================================================
+  SUWAYOMI - INSTALACION PASO A PASO (Windows)
+=====================================================
+
+QUE ES
+  Suwayomi es un lector de manga que funciona en tu
+  propio PC. Estos scripts instalan la version oficial
+  y te dan un panel con botones para manejarla.
+
+  Este paquete NO incluye manga ni fuentes de terceros:
+  las fuentes (extensiones) las eliges tu desde la
+  propia interfaz de Suwayomi. Eres responsable del
+  contenido al que accedas: respeta los derechos de
+  autor y las leyes de tu pais.
+
+REQUISITOS
+  - Windows 10 u 11
+  - Conexion a internet
+
+-----------------------------------------------------
+PRIMERA VEZ (solo una vez)
+-----------------------------------------------------
+
+1. EXTRAE EL ZIP
+   Clic derecho en el zip -> "Extraer todo".
+   No ejecutes nada desde dentro del zip, no funciona.
+
+2. ABRE EL PANEL
+   Abre la carpeta extraida y haz doble clic en
+   "Suwayomi.bat".
+   Si sale una ventana azul ("Windows protegio su PC"):
+   pulsa "Mas informacion" y luego "Ejecutar de todas
+   formas". Windows avisa con cualquier script sin
+   firma digital.
+
+3. EN LA VENTANA, PULSA POR ORDEN:
+     "1. Instalar Suwayomi"                 (espera a que termine)
+     "Encender"                             (el navegador se abre solo)
+     "2. Anadir repositorio de extensiones"
+
+4. ELIGE FUENTES Y LEE
+   En el navegador ve a "Explorar" -> "Extensions",
+   instala las fuentes que quieras, abre un manga y
+   pulsa un capitulo.
+
+-----------------------------------------------------
+CADA DIA
+-----------------------------------------------------
+
+Doble clic en "Suwayomi.bat":
+  Encender / Apagar / Abrir Suwayomi en el navegador.
+
+IMPORTANTE: cerrar la ventana NO apaga Suwayomi.
+Usa el boton "Apagar".
+
+-----------------------------------------------------
+ES SEGURO?
+-----------------------------------------------------
+
+- Suwayomi se descarga de su pagina oficial de GitHub
+  (github.com/Suwayomi). No va incluido en el zip.
+- Todo funciona en tu PC (localhost). Los scripts no
+  envian nada a ningun sitio.
+- Los scripts son texto plano: puedes abrirlos con el
+  Bloc de notas y leerlos.
+
+A tener en cuenta:
+- Las extensiones son codigo de terceros que se ejecuta
+  en tu equipo. Instala solo las de repositorios en los
+  que confies.
+- Las fuentes no oficiales a veces dejan de funcionar o
+  cambian de direccion.
+
+-----------------------------------------------------
+SI ALGO FALLA
+-----------------------------------------------------
+
+- Pulsa "Ver registro" y revisa el ultimo error.
+- Si el navegador no abre, escribe a mano:
+  http://localhost:4567
+- Si dice que el servidor no responde, espera 30
+  segundos y pulsa "Abrir Suwayomi en el navegador".
+
+Tu biblioteca empieza vacia. Se guarda en:
+  C:\Users\TU_USUARIO\AppData\Local\Tachidesk
+=====================================================

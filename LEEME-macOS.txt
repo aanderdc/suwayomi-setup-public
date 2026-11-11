@@ -1,0 +1,102 @@
+=====================================================
+  SUWAYOMI - INSTALACION PASO A PASO (macOS)
+=====================================================
+
+QUE ES
+  Suwayomi es un lector de manga que funciona en tu
+  propio Mac. Estos scripts instalan la version oficial
+  y te dan un panel para manejarla.
+
+  Este paquete NO incluye manga ni fuentes de terceros:
+  las fuentes (extensiones) las eliges tu desde la
+  propia interfaz de Suwayomi. Eres responsable del
+  contenido al que accedas: respeta los derechos de
+  autor y las leyes de tu pais.
+
+REQUISITOS
+  - macOS 12 o superior (Apple Silicon o Intel)
+  - Conexion a internet
+  - No necesitas instalar Java: Suwayomi trae el suyo.
+
+-----------------------------------------------------
+PRIMERA VEZ (solo una vez)
+-----------------------------------------------------
+
+1. DESCARGA Y DESCOMPRIME
+   Descomprime el zip y mueve la carpeta a un sitio
+   fijo (p. ej. Documentos).
+
+2. ABRE EL PANEL
+   Doble clic en "Suwayomi.command".
+   Si macOS dice que no puede abrirlo porque no
+   verifica al desarrollador:
+     a) Ajustes del Sistema -> Privacidad y seguridad
+        -> baja hasta el aviso de Suwayomi.command y
+        pulsa "Abrir igualmente".
+     b) O, en Terminal, dentro de la carpeta:
+          xattr -dr com.apple.quarantine .
+          chmod +x *.command *.sh
+   Es normal: macOS avisa con cualquier script sin
+   firma de Apple.
+
+3. EN LA VENTANA, ELIGE POR ORDEN:
+     "1. Instalar Suwayomi"       (se abre Terminal y
+                                   descarga ~300 MB;
+                                   espera a que termine)
+     "Encender"                   (el navegador se abre solo)
+     "2. Añadir repositorio de extensiones"
+
+4. ELIGE FUENTES Y LEE
+   En el navegador ve a "Explorar" -> "Extensions",
+   instala las fuentes que quieras, abre un manga y
+   pulsa un capitulo.
+
+-----------------------------------------------------
+CADA DIA
+-----------------------------------------------------
+
+Doble clic en "Suwayomi.command":
+  Encender / Apagar / Abrir Suwayomi en el navegador.
+
+IMPORTANTE: cerrar el panel NO apaga Suwayomi.
+Usa la opcion "Apagar".
+
+Opcional: ejecuta "bash crear-app.sh" una vez para
+crear "Suwayomi.app" (se abre sin ventana de Terminal
+y puedes ponerla en el Dock).
+
+-----------------------------------------------------
+ES SEGURO?
+-----------------------------------------------------
+
+- Suwayomi se descarga de su pagina oficial de GitHub
+  (github.com/Suwayomi). No va incluido en el zip.
+- Todo funciona en tu Mac (localhost). Los scripts no
+  envian nada a ningun sitio.
+- Los scripts son texto plano: puedes abrirlos con
+  TextEdit y leerlos.
+
+A tener en cuenta:
+- Las extensiones son codigo de terceros que se ejecuta
+  en tu equipo. Instala solo las de repositorios en los
+  que confies.
+- Las fuentes no oficiales a veces dejan de funcionar o
+  cambian de direccion.
+
+-----------------------------------------------------
+SI ALGO FALLA
+-----------------------------------------------------
+
+- Elige "Ver registro" y revisa el ultimo error.
+- Si el navegador no abre, escribe a mano:
+  http://localhost:4567
+- Si dice que el servidor no responde, espera 30
+  segundos y elige "Abrir Suwayomi en el navegador".
+- Si macOS bloquea "java" al encender, en Terminal:
+  xattr -dr com.apple.quarantine ~/Suwayomi
+- Sin ventanas (menu de texto en Terminal):
+  bash suwayomi-gui.sh --terminal
+
+Tu biblioteca empieza vacia. Se guarda en:
+  ~/Library/Application Support/Tachidesk
+=====================================================
