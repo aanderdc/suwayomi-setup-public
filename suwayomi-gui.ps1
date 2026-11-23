@@ -43,10 +43,10 @@ function Get-SuwayomiProcesses {
         Where-Object { $_.Name -match 'java' -and $_.CommandLine -match 'Suwayomi' }
 }
 
-function Run-Visible($scriptName) {
+function Run-Visible($scriptName, $scriptArgs = '') {
     $path = Join-Path $Root $scriptName
     if (-not (Test-Path $path)) { Msg "No se encuentra $scriptName en la carpeta." 'Error'; return }
-    $cmd = "& '$path'; Write-Host ''; Read-Host 'Terminado. Pulsa Enter para cerrar esta ventana'"
+    $cmd = "& '$path' $scriptArgs; Write-Host ''; Read-Host 'Terminado. Pulsa Enter para cerrar esta ventana'"
     Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $cmd
 }
 
@@ -79,6 +79,7 @@ function Update-State {
     $btnOpen.Enabled    = $up
     $btnInstall.Enabled = -not $inst
     $btnSources.Enabled = $up
+    $btnHistory.Enabled = $inst
 }
 
 function New-Btn($text, $x, $y, $w, $h, $color) {
@@ -107,7 +108,7 @@ function New-Section($text, $y) {
 # ---------------- Ventana ----------------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Suwayomi - Panel de control'
-$form.ClientSize = New-Object System.Drawing.Size(500, 485)
+$form.ClientSize = New-Object System.Drawing.Size(500, 555)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -136,8 +137,11 @@ New-Section 'AYUDA' 267
 $btnLog    = New-Btn 'Ver registro'         20  289 225 35 $null
 $btnFolder = New-Btn 'Abrir carpeta de datos' 255 289 225 35 $null
 
+New-Section 'MANTENIMIENTO' 334
+$btnHistory = New-Btn 'Borrar historial de lectura' 20 356 460 35 $null
+
 $txtLog = New-Object System.Windows.Forms.TextBox
-$txtLog.Location = New-Object System.Drawing.Point(20, 337)
+$txtLog.Location = New-Object System.Drawing.Point(20, 404)
 $txtLog.Size = New-Object System.Drawing.Size(460, 135)
 $txtLog.Multiline = $true
 $txtLog.ReadOnly = $true
@@ -183,6 +187,23 @@ $btnInstall.Add_Click({
 $btnSources.Add_Click({
     Write-Log 'Anadiendo repositorio. Mira la otra ventana.'
     Run-Visible 'setup-sources.ps1'
+})
+
+$btnHistory.Add_Click({
+    $texto = "Se borrara el historial de lectura.`n`n" +
+             "- Los capitulos siguen marcados como leidos.`n" +
+             "- Se conservan la biblioteca, el progreso y las descargas.`n" +
+             "- Se hace una copia de seguridad de la base de datos antes.`n" +
+             "- Suwayomi se cerrara si esta encendido.`n`n" +
+             "Continuar?"
+    $r = [System.Windows.Forms.MessageBox]::Show($texto, 'Borrar historial', 'YesNo', 'Question')
+    if ($r -ne 'Yes') { return }
+
+    foreach ($p in (Get-SuwayomiProcesses)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    $script:Starting = $false
+    Write-Log 'Borrando historial. Mira la otra ventana; despues pulsa "Encender".'
+    Update-State
+    Run-Visible 'clear-history.ps1' '-Force'
 })
 
 $btnLog.Add_Click({
