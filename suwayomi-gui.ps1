@@ -81,6 +81,7 @@ function Update-State {
     $btnSources.Enabled = $up
     $btnHistory.Enabled = $inst
     $btnScan.Enabled    = $inst
+    $btnMobile.Enabled  = $inst
 }
 
 function New-Btn($text, $x, $y, $w, $h, $color) {
@@ -109,7 +110,7 @@ function New-Section($text, $y) {
 # ---------------- Ventana ----------------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Suwayomi - Panel de control'
-$form.ClientSize = New-Object System.Drawing.Size(500, 555)
+$form.ClientSize = New-Object System.Drawing.Size(500, 600)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -144,11 +145,15 @@ $btnScan    = New-Btn 'Escanear extensiones' 255 356 225 35 $null
 
 $tip = New-Object System.Windows.Forms.ToolTip
 $tip.SetToolTip($btnHistory, 'Borra el historial de lectura (con copia de seguridad)')
+$tip.SetToolTip($btnMobile, 'Instala y configura Tailscale paso a paso y te da la direccion para el movil')
 $tip.SetToolTip($btnScan, 'Comprueba las extensiones instaladas en VirusTotal (necesita una API key gratuita)')
 
+New-Section 'ACCESO DESDE EL MOVIL (por datos o WiFi)' 399
+$btnMobile = New-Btn 'Configurar acceso desde el movil (Tailscale)' 20 421 460 40 $blue
+
 $txtLog = New-Object System.Windows.Forms.TextBox
-$txtLog.Location = New-Object System.Drawing.Point(20, 404)
-$txtLog.Size = New-Object System.Drawing.Size(460, 135)
+$txtLog.Location = New-Object System.Drawing.Point(20, 468)
+$txtLog.Size = New-Object System.Drawing.Size(460, 120)
 $txtLog.Multiline = $true
 $txtLog.ReadOnly = $true
 $txtLog.ScrollBars = 'Vertical'
@@ -210,6 +215,11 @@ $btnHistory.Add_Click({
     Write-Log 'Borrando historial. Mira la otra ventana; despues pulsa "Encender".'
     Update-State
     Run-Visible 'clear-history.ps1' '-Force'
+})
+
+$btnMobile.Add_Click({
+    Write-Log 'Configurando el acceso desde el movil. Sigue los pasos de la otra ventana.'
+    Run-Visible 'setup-tailscale.ps1'
 })
 
 $btnScan.Add_Click({

@@ -20,6 +20,7 @@ instalar, encender, apagar y abrir el lector en el navegador.
 | `setup-sources.ps1` | `setup-sources.sh` | Con el servidor encendido, añade el repositorio de extensiones [Keiyoushi](https://github.com/keiyoushi/extensions). |
 | `clear-history.ps1` | `clear-history.sh` | Borra el historial de lectura (con copia de seguridad previa). |
 | `verificar-extensiones.ps1` | — | Comprueba en VirusTotal las extensiones instaladas (solo Windows; necesita una API key gratuita). |
+| `setup-tailscale.ps1` | — | Configura Tailscale paso a paso para usar Suwayomi desde el movil (incluso con datos). Solo Windows. |
 | — | `common.sh` | Configuración compartida de los scripts de macOS. |
 | — | `crear-app.sh` | Opcional: crea `Suwayomi.app` para abrir el panel sin ventana de Terminal. |
 
