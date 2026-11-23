@@ -80,6 +80,7 @@ function Update-State {
     $btnInstall.Enabled = -not $inst
     $btnSources.Enabled = $up
     $btnHistory.Enabled = $inst
+    $btnScan.Enabled    = $inst
 }
 
 function New-Btn($text, $x, $y, $w, $h, $color) {
@@ -137,8 +138,13 @@ New-Section 'AYUDA' 267
 $btnLog    = New-Btn 'Ver registro'         20  289 225 35 $null
 $btnFolder = New-Btn 'Abrir carpeta de datos' 255 289 225 35 $null
 
-New-Section 'MANTENIMIENTO' 334
-$btnHistory = New-Btn 'Borrar historial de lectura' 20 356 460 35 $null
+New-Section 'MANTENIMIENTO Y SEGURIDAD' 334
+$btnHistory = New-Btn 'Borrar historial' 20  356 225 35 $null
+$btnScan    = New-Btn 'Escanear extensiones' 255 356 225 35 $null
+
+$tip = New-Object System.Windows.Forms.ToolTip
+$tip.SetToolTip($btnHistory, 'Borra el historial de lectura (con copia de seguridad)')
+$tip.SetToolTip($btnScan, 'Comprueba las extensiones instaladas en VirusTotal (necesita una API key gratuita)')
 
 $txtLog = New-Object System.Windows.Forms.TextBox
 $txtLog.Location = New-Object System.Drawing.Point(20, 404)
@@ -204,6 +210,16 @@ $btnHistory.Add_Click({
     Write-Log 'Borrando historial. Mira la otra ventana; despues pulsa "Encender".'
     Update-State
     Run-Visible 'clear-history.ps1' '-Force'
+})
+
+$btnScan.Add_Click({
+    $extDir = Join-Path $DataDir 'extensions'
+    if (-not (Test-Path $extDir) -or -not (Get-ChildItem -Path $extDir -Filter *.jar -ErrorAction SilentlyContinue)) {
+        Msg 'No hay extensiones instaladas todavia. Instala alguna desde Suwayomi y vuelve a probar.' 'Information'
+        return
+    }
+    Write-Log 'Escaneando extensiones en VirusTotal. Mira la otra ventana (pedira tu API key).'
+    Run-Visible 'verificar-extensiones.ps1'
 })
 
 $btnLog.Add_Click({
