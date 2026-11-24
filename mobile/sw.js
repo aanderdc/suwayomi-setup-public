@@ -1,12 +1,12 @@
-const CACHE_NAME = 'suwayomi-movil-v9';
+const CACHE_NAME = 'suwayomi-movil-v10';
 const MEDIA_CACHE = 'suwayomi-offline-media-v1';
 const SHELL_URLS = [
   '/movil/',
   '/movil/index.html',
-  '/movil/styles.css?v=9',
-  '/movil/offline.js?v=9',
-  '/movil/extras.js?v=9',
-  '/movil/app.js?v=9',
+  '/movil/styles.css?v=10',
+  '/movil/offline.js?v=10',
+  '/movil/extras.js?v=10',
+  '/movil/app.js?v=10',
   '/movil/manifest.json',
   '/movil/icon-192.png',
   '/movil/icon-512.png',
@@ -39,6 +39,11 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
   if (!url.pathname.startsWith('/movil')) return;
+
+  // Nunca cachear tráfico dinámico de la bóveda ni acciones privadas
+  if (url.pathname.startsWith('/movil/__vault__/') || url.pathname.startsWith('/movil/__action__/')) {
+    return;
+  }
 
   if (url.pathname.startsWith('/movil/__offline__/')) {
     event.respondWith(
