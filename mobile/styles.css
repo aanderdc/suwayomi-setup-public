@@ -486,7 +486,7 @@ button, input, select {
   -webkit-backdrop-filter: blur(14px);
   border-top: 1px solid var(--border);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
 }
 
 .nav-btn {
@@ -498,9 +498,10 @@ button, input, select {
   border: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   cursor: pointer;
+  padding: 0 2px;
 }
 
 .nav-btn svg {
@@ -1103,7 +1104,7 @@ button, input, select {
   left: 50%;
   bottom: calc(var(--nav-h) + var(--safe-bottom) + 16px);
   transform: translateX(-50%);
-  z-index: 99;
+  z-index: 120;
   background: rgba(28, 34, 46, 0.96);
   color: #fff;
   border: 1px solid var(--border);
@@ -1114,4 +1115,229 @@ button, input, select {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
   max-width: 88vw;
   text-align: center;
+}
+
+/* ---------------- Cola de descargas, doble página, zoom, HUD brillo y PIN ---------------- */
+.dl-queue-bar {
+  margin: 8px 12px 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(48, 196, 116, 0.14);
+  border: 1px solid rgba(48, 196, 116, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.dl-queue-info {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #b7f5d2;
+  font-weight: 600;
+}
+
+.reader-paged-spread {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  gap: 2px;
+}
+
+.reader-paged-spread .reader-paged-img {
+  max-width: 50vw;
+  max-height: 100vh;
+}
+
+.reader-stage.zoomed .reader-vertical-list {
+  width: 200%;
+}
+
+.reader-stage.zoomed {
+  overflow: auto !important;
+}
+
+.reader-stage.zoomed .reader-paged-img {
+  max-width: none;
+  max-height: none;
+  width: 200vw;
+}
+
+.reader-hud {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 90;
+  background: rgba(11, 13, 18, 0.88);
+  border: 1px solid var(--border);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.icon-btn.bookmarked {
+  color: #ffd166;
+  background: rgba(255, 209, 102, 0.16);
+}
+
+.quota-bar-track {
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+  margin: 6px 0 8px;
+}
+
+.quota-bar-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 999px;
+}
+
+.quota-bar-fill.warn {
+  background: var(--accent);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.stat-tile {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 6px;
+  text-align: center;
+}
+
+.stat-tile strong {
+  display: block;
+  font-size: 17px;
+  color: #fff;
+}
+
+.stat-tile span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pin-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.pin-box {
+  width: 100%;
+  max-width: 280px;
+  text-align: center;
+}
+
+.pin-icon {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  margin-bottom: 10px;
+}
+
+.pin-box h2 {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+
+.pin-dots {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.pin-dots span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.pin-dots span.filled {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.pin-err {
+  min-height: 18px;
+  font-size: 12px;
+  color: #ff8690;
+  margin-bottom: 10px;
+}
+
+.pin-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.pin-pad button {
+  height: 56px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pin-pad button:active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.pin-pad button.pin-fn {
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.chap-star-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.chap-star-btn.active {
+  color: #ffd166;
+}
+
+.select-pill {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text);
 }

@@ -9,10 +9,12 @@ $MobilePort  = 4568
 $Url         = "http://localhost:$Port"
 $DataDir     = Join-Path $env:LOCALAPPDATA 'Tachidesk'
 $InstallRoot = Join-Path $env:USERPROFILE 'Suwayomi'
+$StartupFile = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\Suwayomi-AutoStart.bat'
 
 $script:Launcher  = $null
 $script:Starting  = $false
 $script:StartTime = Get-Date
+$script:AllowExit = $false
 
 # ---------------- Funciones ----------------
 function Msg($text, $icon = 'Information') {
@@ -40,6 +42,7 @@ function Test-Server {
 function Get-Launcher {
     if (-not (Test-Path $InstallRoot)) { return $null }
     Get-ChildItem -Path $InstallRoot -Filter 'Suwayomi-Launcher.jar' -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending |
         Select-Object -First 1
 }
 
@@ -61,6 +64,43 @@ function Stop-MobileServer {
     foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
+function Start-SuwayomiNow {
+    $script:Launcher = Get-Launcher
+    if (-not $script:Launcher) { Msg 'Suwayomi no esta instalado. Pulsa "1. Instalar Suwayomi".' 'Warning'; return }
+    Start-MobileServer
+    $dir = $script:Launcher.DirectoryName
+    $java = $null
+    $jre = Join-Path $dir 'jre\bin\javaw.exe'
+    if (Test-Path $jre) { $java = $jre }
+    else {
+        $cmd = Get-Command javaw.exe -ErrorAction SilentlyContinue
+        if ($cmd) { $java = $cmd.Source }
+    }
+    if (-not $java) { Msg 'No se encontro Java. Reinstala Suwayomi con el boton "1. Instalar Suwayomi".' 'Error'; return }
+    $serverJar = Join-Path $dir 'bin\Suwayomi-Server.jar'
+    if (Test-Path $serverJar) {
+        Start-Process -FilePath $java -ArgumentList `
+            '-Dsuwayomi.tachidesk.config.server.initialOpenInBrowserEnabled=false', `
+            '-Dsuwayomi.tachidesk.config.server.systemTrayEnabled=false', `
+            '-jar', 'bin\Suwayomi-Server.jar' -WorkingDirectory $dir -WindowStyle Hidden
+    } else {
+        Start-Process -FilePath $java -ArgumentList '--add-exports=java.desktop/sun.awt=ALL-UNNAMED', '-jar', 'Suwayomi-Launcher.jar' -WorkingDirectory $dir -WindowStyle Hidden
+    }
+    $script:Starting  = $true
+    $script:StartTime = Get-Date
+    Write-Log 'Encendiendo Suwayomi, puede tardar unos segundos...'
+    Update-State
+}
+
+function Stop-SuwayomiNow {
+    $procs = Get-SuwayomiProcesses
+    foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    Stop-MobileServer
+    $script:Starting = $false
+    Write-Log 'Suwayomi apagado.'
+    Update-State
+}
+
 function Run-Visible($scriptName, $scriptArgs = '') {
     $path = Join-Path $Root $scriptName
     if (-not (Test-Path $path)) { Msg "No se encuentra $scriptName en la carpeta." 'Error'; return }
@@ -68,8 +108,18 @@ function Run-Visible($scriptName, $scriptArgs = '') {
     Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $cmd
 }
 
+function Update-AutoStartLabel {
+    if (Test-Path $StartupFile) {
+        $btnAutoStart.Text = 'Inicio con Windows: SI'
+        $btnAutoStart.ForeColor = [System.Drawing.Color]::FromArgb(20, 120, 50)
+    } else {
+        $btnAutoStart.Text = 'Inicio con Windows: NO'
+        $btnAutoStart.ForeColor = [System.Drawing.Color]::Black
+    }
+}
+
 function Update-State {
-    if (-not $script:Launcher) { $script:Launcher = Get-Launcher }
+    $script:Launcher = Get-Launcher
     $inst = [bool]$script:Launcher
     $up   = Test-Server
 
@@ -92,14 +142,18 @@ function Update-State {
         $lblStatus.Text = 'NO INSTALADO'; $lblStatus.ForeColor = [System.Drawing.Color]::Gray
     }
 
-    $btnStart.Enabled   = $inst -and (-not $up) -and (-not $script:Starting)
-    $btnStop.Enabled    = $up -or $script:Starting
-    $btnOpen.Enabled    = $up
-    $btnInstall.Enabled = -not $inst
-    $btnSources.Enabled = $up
-    $btnHistory.Enabled = $inst
-    $btnScan.Enabled    = $inst
-    $btnMobile.Enabled  = $inst
+    $btnStart.Enabled     = $inst -and (-not $up) -and (-not $script:Starting)
+    $btnStop.Enabled      = $up -or $script:Starting
+    $btnOpen.Enabled      = $up
+    $btnInstall.Enabled   = -not $inst
+    $btnSources.Enabled   = $up
+    $btnHistory.Enabled   = $inst
+    $btnScan.Enabled      = $inst
+    $btnUpdate.Enabled    = $inst
+    $btnBackup.Enabled    = $inst
+    $btnAutoStart.Enabled = $inst
+    $btnMobile.Enabled    = $inst
+    Update-AutoStartLabel
 }
 
 function New-Btn($text, $x, $y, $w, $h, $color) {
@@ -107,7 +161,7 @@ function New-Btn($text, $x, $y, $w, $h, $color) {
     $b.Text = $text
     $b.Location = New-Object System.Drawing.Point($x, $y)
     $b.Size = New-Object System.Drawing.Size($w, $h)
-    $b.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+    $b.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
     $b.FlatStyle = 'Flat'
     $b.Cursor = 'Hand'
     if ($color) { $b.BackColor = $color; $b.ForeColor = [System.Drawing.Color]::White }
@@ -128,86 +182,93 @@ function New-Section($text, $y) {
 # ---------------- Ventana ----------------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Suwayomi - Panel de control'
-$form.ClientSize = New-Object System.Drawing.Size(500, 600)
+$form.ClientSize = New-Object System.Drawing.Size(500, 650)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
 
 $lblStatus = New-Object System.Windows.Forms.Label
-$lblStatus.Location = New-Object System.Drawing.Point(20, 10)
-$lblStatus.Size = New-Object System.Drawing.Size(460, 45)
+$lblStatus.Location = New-Object System.Drawing.Point(20, 8)
+$lblStatus.Size = New-Object System.Drawing.Size(460, 42)
 $lblStatus.TextAlign = 'MiddleCenter'
-$lblStatus.Font = New-Object System.Drawing.Font('Segoe UI', 20, [System.Drawing.FontStyle]::Bold)
+$lblStatus.Font = New-Object System.Drawing.Font('Segoe UI', 19, [System.Drawing.FontStyle]::Bold)
 $form.Controls.Add($lblStatus)
 
 $green = [System.Drawing.Color]::FromArgb(30, 140, 60)
 $red   = [System.Drawing.Color]::FromArgb(190, 40, 40)
 $blue  = [System.Drawing.Color]::FromArgb(30, 100, 190)
 
-New-Section 'USO DIARIO' 60
-$btnStart = New-Btn 'Encender'  20  82 225 50 $green
-$btnStop  = New-Btn 'Apagar'    255 82 225 50 $red
-$btnOpen  = New-Btn 'Abrir Suwayomi en el navegador' 20 140 460 45 $blue
+New-Section 'USO DIARIO' 54
+$btnStart = New-Btn 'Encender'  20  74 225 46 $green
+$btnStop  = New-Btn 'Apagar'    255 74 225 46 $red
+$btnOpen  = New-Btn 'Abrir Suwayomi en el navegador' 20 126 460 40 $blue
 
-New-Section 'PRIMERA VEZ' 195
-$btnInstall = New-Btn '1. Instalar Suwayomi'            20  217 225 40 $null
-$btnSources = New-Btn '2. Anadir repositorio de extensiones'    255 217 225 40 $null
+New-Section 'PRIMERA VEZ' 176
+$btnInstall = New-Btn '1. Instalar Suwayomi'                 20  196 225 36 $null
+$btnSources = New-Btn '2. Anadir repositorio de extensiones' 255 196 225 36 $null
 
-New-Section 'AYUDA' 267
-$btnLog    = New-Btn 'Ver registro'         20  289 225 35 $null
-$btnFolder = New-Btn 'Abrir carpeta de datos' 255 289 225 35 $null
+New-Section 'MANTENIMIENTO, COPIAS Y SEGURIDAD' 242
+$btnUpdate    = New-Btn 'Actualizar Suwayomi'    20  262 225 34 $null
+$btnBackup    = New-Btn 'Copia de seguridad'     255 262 225 34 $null
+$btnHistory   = New-Btn 'Borrar historial'       20  302 225 34 $null
+$btnScan      = New-Btn 'Escanear extensiones'   255 302 225 34 $null
+$btnAutoStart = New-Btn 'Inicio con Windows: NO' 20  342 225 34 $null
+$btnLog       = New-Btn 'Ver registro'           255 342 108 34 $null
+$btnFolder    = New-Btn 'Carpeta datos'          372 342 108 34 $null
 
-New-Section 'MANTENIMIENTO Y SEGURIDAD' 334
-$btnHistory = New-Btn 'Borrar historial' 20  356 225 35 $null
-$btnScan    = New-Btn 'Escanear extensiones' 255 356 225 35 $null
-
-New-Section 'ACCESO DESDE EL MOVIL (por datos o WiFi)' 399
-$btnMobile = New-Btn 'Acceso desde el movil (Tailscale)' 20 421 460 40 $blue
+New-Section 'ACCESO DESDE EL MOVIL (por datos o WiFi)' 386
+$btnMobile = New-Btn 'Acceso desde el movil (Tailscale + App)' 20 406 460 40 $blue
 
 $tip = New-Object System.Windows.Forms.ToolTip
+$tip.SetToolTip($btnUpdate, 'Comprueba la ultima version oficial en GitHub y actualiza conservando tu biblioteca')
+$tip.SetToolTip($btnBackup, 'Crea o restaura copias de seguridad (database.mv.db y .tachibk para Mihon/Tachiyomi)')
 $tip.SetToolTip($btnHistory, 'Borra el historial de lectura (con copia de seguridad)')
 $tip.SetToolTip($btnScan, 'Comprueba las extensiones instaladas en VirusTotal (necesita una API key gratuita)')
+$tip.SetToolTip($btnAutoStart, 'Arranca Suwayomi y el servidor movil automaticamente al encender Windows (reversible)')
 $tip.SetToolTip($btnMobile, 'Abre el asistente visual de Tailscale: acceso privado HTTPS, codigo QR y control de suspension')
 
 $txtLog = New-Object System.Windows.Forms.TextBox
-$txtLog.Location = New-Object System.Drawing.Point(20, 468)
-$txtLog.Size = New-Object System.Drawing.Size(460, 120)
+$txtLog.Location = New-Object System.Drawing.Point(20, 456)
+$txtLog.Size = New-Object System.Drawing.Size(460, 182)
 $txtLog.Multiline = $true
 $txtLog.ReadOnly = $true
 $txtLog.ScrollBars = 'Vertical'
 $txtLog.BackColor = [System.Drawing.Color]::White
-$txtLog.Font = New-Object System.Drawing.Font('Consolas', 9)
+$txtLog.Font = New-Object System.Drawing.Font('Consolas', 8.5)
 $form.Controls.Add($txtLog)
 
-# ---------------- Acciones ----------------
-$btnStart.Add_Click({
-    if (-not $script:Launcher) { Msg 'Suwayomi no esta instalado. Pulsa "Instalar Suwayomi".' 'Warning'; return }
-    Start-MobileServer
-    $dir = $script:Launcher.DirectoryName
-    $java = $null
-    $jre = Join-Path $dir 'jre\bin\javaw.exe'
-    if (Test-Path $jre) { $java = $jre }
-    else {
-        $cmd = Get-Command javaw.exe -ErrorAction SilentlyContinue
-        if ($cmd) { $java = $cmd.Source }
+# ---------------- Icono en bandeja del sistema (System Tray) ----------------
+$tray = New-Object System.Windows.Forms.NotifyIcon
+$tray.Icon = [System.Drawing.SystemIcons]::Application
+$tray.Text = 'Suwayomi - Panel de control'
+$tray.Visible = $true
+
+$trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
+$miShow  = $trayMenu.Items.Add('Mostrar panel')
+$miOpen  = $trayMenu.Items.Add('Abrir en navegador')
+$miStart = $trayMenu.Items.Add('Encender Suwayomi')
+$miStop  = $trayMenu.Items.Add('Apagar Suwayomi')
+[void]$trayMenu.Items.Add('-')
+$miExit  = $trayMenu.Items.Add('Cerrar panel (salir)')
+$tray.ContextMenuStrip = $trayMenu
+
+$miShow.Add_Click({ $form.Show(); $form.WindowState = 'Normal'; $form.Activate() })
+$miOpen.Add_Click({ if (Test-Server) { Start-Process $Url } })
+$miStart.Add_Click({ if (-not (Test-Server)) { Start-SuwayomiNow } })
+$miStop.Add_Click({ Stop-SuwayomiNow })
+$miExit.Add_Click({ $script:AllowExit = $true; $form.Close() })
+$tray.Add_DoubleClick({ $form.Show(); $form.WindowState = 'Normal'; $form.Activate() })
+
+$form.Add_Resize({
+    if ($form.WindowState -eq 'Minimized') {
+        $form.Hide()
+        $tray.ShowBalloonTip(2000, 'Suwayomi', 'El panel sigue en la bandeja del sistema. Doble clic para abrirlo.', 'Info')
     }
-    if (-not $java) { Msg 'No se encontro Java. Reinstala Suwayomi con el boton "Instalar Suwayomi".' 'Error'; return }
-    Start-Process -FilePath $java -ArgumentList '-jar', 'Suwayomi-Launcher.jar' -WorkingDirectory $dir -WindowStyle Hidden
-    $script:Starting  = $true
-    $script:StartTime = Get-Date
-    Write-Log 'Encendiendo Suwayomi, puede tardar unos segundos...'
-    Update-State
 })
 
-$btnStop.Add_Click({
-    $procs = Get-SuwayomiProcesses
-    foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
-    Stop-MobileServer
-    $script:Starting = $false
-    Write-Log 'Suwayomi apagado.'
-    Update-State
-})
-
+# ---------------- Acciones ----------------
+$btnStart.Add_Click({ Start-SuwayomiNow })
+$btnStop.Add_Click({ Stop-SuwayomiNow })
 $btnOpen.Add_Click({ Start-Process $Url })
 
 $btnInstall.Add_Click({
@@ -218,6 +279,40 @@ $btnInstall.Add_Click({
 $btnSources.Add_Click({
     Write-Log 'Anadiendo repositorio. Mira la otra ventana.'
     Run-Visible 'setup-sources.ps1'
+})
+
+$btnUpdate.Add_Click({
+    Write-Log 'Comprobando actualizaciones de Suwayomi en GitHub...'
+    Run-Visible 'update-suwayomi.ps1'
+})
+
+$btnBackup.Add_Click({
+    Write-Log 'Abriendo asistente de copias de seguridad y restauracion...'
+    Run-Visible 'backup-restore.ps1'
+})
+
+$btnAutoStart.Add_Click({
+    if (Test-Path $StartupFile) {
+        Remove-Item -Path $StartupFile -Force -ErrorAction SilentlyContinue
+        Write-Log 'Inicio automatico con Windows DESACTIVADO.'
+    } else {
+        $l = Get-Launcher
+        if (-not $l) { Msg 'Instala Suwayomi primero.' 'Warning'; return }
+        $dir = $l.DirectoryName
+        $jre = Join-Path $dir 'jre\bin\javaw.exe'
+        $javaCmd = if (Test-Path $jre) { "`"$jre`"" } else { 'javaw.exe' }
+        $srvJar = Join-Path $dir 'bin\Suwayomi-Server.jar'
+        $mobileSrv = Join-Path $Root 'mobile-server.ps1'
+        $lines = @(
+            '@echo off',
+            "cd /d `"$dir`"",
+            "start `"`" $javaCmd -Dsuwayomi.tachidesk.config.server.initialOpenInBrowserEnabled=false -Dsuwayomi.tachidesk.config.server.systemTrayEnabled=false -jar `"$srvJar`"",
+            "if exist `"$mobileSrv`" start `"`" powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$mobileSrv`""
+        )
+        Set-Content -Path $StartupFile -Value ($lines -join "`r`n") -Encoding ASCII
+        Write-Log 'Inicio automatico con Windows ACTIVADO (Suwayomi + app movil arrancaran solos al iniciar sesion).'
+    }
+    Update-AutoStartLabel
 })
 
 $btnHistory.Add_Click({
@@ -274,9 +369,14 @@ $form.Add_Shown({
     Update-State
     if (Test-Server) { Start-MobileServer }
     if (-not $script:Launcher) { Write-Log 'Bienvenido. Pulsa "1. Instalar Suwayomi" para empezar.' }
-    else { Write-Log 'Listo. Pulsa "Encender" para usar Suwayomi.' }
+    else { Write-Log 'Listo. Minimizar oculta el panel en la bandeja del sistema.' }
     $timer.Start()
 })
 
+$form.Add_FormClosing({
+    $timer.Stop()
+    $tray.Visible = $false
+    $tray.Dispose()
+})
+
 [void]$form.ShowDialog()
-$timer.Stop()

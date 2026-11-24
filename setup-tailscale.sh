@@ -195,9 +195,15 @@ Podrás volver a activarlo cuando quieras." || return
 TS="$(find_tailscale || true)"
 L_ACT="Activar / configurar acceso móvil"
 L_COPY="Copiar enlace privado"
+L_QR="Mostrar enlace y código QR"
 L_OPEN="Probar enlace en el navegador"
 L_OFF="Desactivar acceso móvil"
 L_FIX="Desactivar Funnel (hacerlo privado)"
+
+show_qr_terminal() {
+    local url="$1"
+    run_in_terminal "printf '\nEnlace privado para tu móvil:\n  %s\n\n' '$url'; if command -v qrencode >/dev/null 2>&1; then qrencode -t ANSIUTF8 '$url'; else echo '(Instala qrencode con brew install qrencode si quieres verlo como QR en Terminal, o copia el enlace de arriba.)'; fi"
+}
 
 while true; do
     TS="$(find_tailscale || true)"
@@ -211,7 +217,7 @@ while true; do
         URL="https://$DNS/movil/"
         status="ACTIVO ✅
 Enlace lector móvil: $URL"
-        items=("$L_COPY" "$L_OPEN" "$L_OFF")
+        items=("$L_COPY" "$L_QR" "$L_OPEN" "$L_OFF")
     else
         status="NO ACTIVADO ⚪️
 Acceso privado HTTPS con Tailscale (sin abrir puertos)."
@@ -226,6 +232,7 @@ Estado: $status" "${items[@]}")"
     case "$choice" in
         "$L_ACT")  do_activate ;;
         "$L_COPY") copy_url "$URL"; ui_notify "Enlace copiado al portapapeles." ;;
+        "$L_QR")   show_qr_terminal "$URL" ;;
         "$L_OPEN") open "$URL" ;;
         "$L_OFF")  do_deactivate ;;
         "$L_FIX")  "$TS" funnel --https=443 off >/dev/null 2>&1 || true; ui_msg "Funnel desactivado. El acceso vuelve a ser privado." note ;;

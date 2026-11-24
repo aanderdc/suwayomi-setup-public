@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/movil/icon-192.png">
   <link rel="icon" type="image/svg+xml" href="/movil/icon.svg">
   <link rel="apple-touch-icon" sizes="192x192" href="/movil/icon-192.png">
-  <link rel="stylesheet" href="/movil/styles.css?v=6">
+  <link rel="stylesheet" href="/movil/styles.css?v=7">
 </head>
 <body>
   <div id="app">
@@ -43,14 +43,25 @@
       <button id="installBannerClose" class="install-banner-close" type="button" aria-label="Cerrar">×</button>
     </div>
 
+    <!-- Barra flotante de cola de descargas activas -->
+    <div id="dlQueueBar" class="dl-queue-bar hidden">
+      <div id="dlQueueInfo" class="dl-queue-info">Descargando...</div>
+      <button id="dlQueuePauseBtn" class="offline-retry-btn" type="button">Pausar</button>
+      <button id="dlQueueOpenBtn" class="offline-retry-btn" type="button">Cola</button>
+    </div>
+
     <!-- Contenido principal de pestañas -->
     <main id="mainContent" class="main-content"></main>
 
-    <!-- Barra de navegación inferior estilo app -->
+    <!-- Barra de navegación inferior (5 pestañas) -->
     <nav id="bottomNav" class="bottom-nav" aria-label="Navegación principal">
       <button class="nav-btn active" data-tab="library" type="button">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6zm10 0a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2V6z"/></svg>
         <span>Biblioteca</span>
+      </button>
+      <button class="nav-btn" data-tab="updates" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6v-5a6 6 0 0 0-5-5.9V4a1 1 0 0 0-2 0v1.1A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+        <span>Novedades</span>
       </button>
       <button class="nav-btn" data-tab="recent" type="button">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 10.4 3.2 1.9-.9 1.5L11 13.3V7h2z"/></svg>
@@ -69,11 +80,18 @@
     <!-- Vista detalle de manga -->
     <section id="mangaView" class="overlay-view hidden" aria-label="Detalle del manga"></section>
 
+    <!-- Modal genérico inferior (categorías, migración, cola de descargas) -->
+    <div id="appSheetBackdrop" class="sheet-backdrop hidden"></div>
+    <div id="appSheet" class="bottom-sheet hidden"></div>
+
     <!-- Vista lector a pantalla completa estilo Manga Dogs -->
     <section id="readerView" class="reader-view hidden" aria-label="Lector de manga">
       <div id="readerDimmer" class="reader-dimmer"></div>
 
       <div id="readerStage" class="reader-stage"></div>
+
+      <!-- HUD flotante de brillo al deslizar por el borde izquierdo -->
+      <div id="readerBrightnessHud" class="reader-hud hidden"></div>
 
       <!-- Indicador discreto de página (esquina inferior) -->
       <div id="readerMiniStatus" class="reader-mini-status"></div>
@@ -87,6 +105,9 @@
           <div id="readerMangaTitle" class="reader-manga-title"></div>
           <div id="readerChapterTitle" class="reader-chapter-title"></div>
         </div>
+        <button id="readerBookmarkBtn" class="icon-btn" type="button" aria-label="Marcar página">
+          <svg viewBox="0 0 24 24"><path d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z"/></svg>
+        </button>
         <button id="readerChaptersBtn" class="icon-btn" type="button" aria-label="Lista de capítulos">
           <svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
         </button>
@@ -103,9 +124,9 @@
           <span id="readerPageTotal" class="reader-page-num">1</span>
         </div>
         <div class="reader-nav-row">
-          <button id="readerPrevChap" class="reader-pill-btn" type="button">‹ Cap. anterior</button>
-          <button id="readerModeQuick" class="reader-pill-btn accent" type="button">Vertical</button>
-          <button id="readerNextChap" class="reader-pill-btn" type="button">Cap. siguiente ›</button>
+          <button id="readerPrevChap" class="reader-pill-btn" type="button">‹ Anterior</button>
+          <button id="readerModeQuick" class="reader-pill-btn accent" type="button">Continuo (PDF)</button>
+          <button id="readerNextChap" class="reader-pill-btn" type="button">Siguiente ›</button>
         </div>
       </div>
 
@@ -114,11 +135,36 @@
       <div id="readerSheet" class="bottom-sheet hidden"></div>
     </section>
 
+    <!-- Pantalla de bloqueo con PIN opcional -->
+    <div id="pinLockOverlay" class="pin-overlay hidden" aria-label="Bloqueo con PIN">
+      <div class="pin-box">
+        <img src="/movil/icon-192.png" alt="" class="pin-icon">
+        <h2 id="pinTitle">Introduce tu PIN</h2>
+        <div id="pinDots" class="pin-dots"><span></span><span></span><span></span><span></span></div>
+        <div id="pinErr" class="pin-err"></div>
+        <div id="pinPad" class="pin-pad">
+          <button type="button" data-pin="1">1</button>
+          <button type="button" data-pin="2">2</button>
+          <button type="button" data-pin="3">3</button>
+          <button type="button" data-pin="4">4</button>
+          <button type="button" data-pin="5">5</button>
+          <button type="button" data-pin="6">6</button>
+          <button type="button" data-pin="7">7</button>
+          <button type="button" data-pin="8">8</button>
+          <button type="button" data-pin="9">9</button>
+          <button type="button" data-pin="clear" class="pin-fn">C</button>
+          <button type="button" data-pin="0">0</button>
+          <button type="button" data-pin="back" class="pin-fn">⌫</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast de notificaciones -->
     <div id="toast" class="toast hidden"></div>
   </div>
 
-  <script src="/movil/offline.js?v=6"></script>
-  <script src="/movil/app.js?v=6"></script>
+  <script src="/movil/offline.js?v=7"></script>
+  <script src="/movil/extras.js?v=7"></script>
+  <script src="/movil/app.js?v=7"></script>
 </body>
 </html>

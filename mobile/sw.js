@@ -1,11 +1,12 @@
-const CACHE_NAME = 'suwayomi-movil-v6';
+const CACHE_NAME = 'suwayomi-movil-v7';
 const MEDIA_CACHE = 'suwayomi-offline-media-v1';
 const SHELL_URLS = [
   '/movil/',
   '/movil/index.html',
-  '/movil/styles.css?v=6',
-  '/movil/offline.js?v=6',
-  '/movil/app.js?v=6',
+  '/movil/styles.css?v=7',
+  '/movil/offline.js?v=7',
+  '/movil/extras.js?v=7',
+  '/movil/app.js?v=7',
   '/movil/manifest.json',
   '/movil/icon-192.png',
   '/movil/icon-512.png',
@@ -39,7 +40,6 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (!url.pathname.startsWith('/movil')) return;
 
-  // Servir portadas y páginas descargadas directamente desde la caché offline
   if (url.pathname.startsWith('/movil/__offline__/')) {
     event.respondWith(
       caches.open(MEDIA_CACHE)
@@ -49,7 +49,6 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // App shell: red primero con respaldo inmediato en caché si el PC está apagado
   event.respondWith(
     fetch(req)
       .then((res) => {

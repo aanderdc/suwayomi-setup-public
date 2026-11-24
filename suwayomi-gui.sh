@@ -16,6 +16,10 @@ L_LOG="Ver registro"
 L_FOLDER="Abrir carpeta de datos"
 L_HIST="Borrar historial de lectura"
 L_MOBILE="Acceso desde el móvil (Tailscale)"
+L_UPDATE="Actualizar Suwayomi"
+L_BACKUP="Copia de seguridad / Restaurar"
+L_SCAN="Escanear extensiones (VirusTotal)"
+L_AUTO="Inicio automático con macOS"
 
 q() { printf '%q' "$1"; }   # escapa una ruta para meterla en un comando
 
@@ -127,6 +131,54 @@ do_mobile() {
     bash "$ROOT/setup-tailscale.sh"
 }
 
+do_update() {
+    run_in_terminal "bash $(q "$ROOT/update-suwayomi.sh")"
+}
+
+do_backup() {
+    run_in_terminal "bash $(q "$ROOT/backup-restore.sh")"
+}
+
+do_scan() {
+    run_in_terminal "bash $(q "$ROOT/verificar-extensiones.sh")"
+}
+
+do_autostart() {
+    local plist="$HOME/Library/LaunchAgents/com.suwayomi.setup.plist"
+    if [ -f "$plist" ]; then
+        if ui_yesno "El inicio automático con macOS está ACTIVADO.
+
+¿Desactivarlo?"; then
+            launchctl unload "$plist" 2>/dev/null || true
+            rm -f "$plist"
+            ui_msg "Inicio automático con macOS desactivado." note
+        fi
+        return
+    fi
+    local dir java
+    dir="$(find_server_dir "$INSTALL_ROOT")" || { ui_msg "Instala Suwayomi primero." caution; return; }
+    java="$(find_java "$dir")" || { ui_msg "No se encontró Java." stop; return; }
+    if ui_yesno "¿Arrancar Suwayomi y el servidor móvil automáticamente al iniciar sesión en macOS?"; then
+        mkdir -p "$HOME/Library/LaunchAgents"
+        cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.suwayomi.setup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>cd "$dir" &amp;&amp; "$java" --add-exports=java.desktop/sun.awt=ALL-UNNAMED -Dapple.awt.UIElement=true -Dsuwayomi.tachidesk.config.server.initialOpenInBrowserEnabled=false -Dsuwayomi.tachidesk.config.server.systemTrayEnabled=false -jar bin/Suwayomi-Server.jar &amp; python3 "$ROOT/mobile-server.py" &amp; wait</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+PLIST
+        launchctl load "$plist" 2>/dev/null || true
+        ui_msg "Inicio automático con macOS activado." note
+    fi
+}
+
 # ---------------- Bucle principal ----------------
 
 while true; do
@@ -142,7 +194,7 @@ while true; do
         NOINST)   status="NO INSTALADO ⚪️"
                   items=("$L_INSTALL") ;;
     esac
-    items+=("$L_MOBILE" "$L_LOG" "$L_FOLDER" "$L_HIST")
+    items+=("$L_MOBILE" "$L_UPDATE" "$L_BACKUP" "$L_SCAN" "$L_AUTO" "$L_LOG" "$L_FOLDER" "$L_HIST")
 
     if [ "$state" = NOINST ]; then
         hint="Bienvenido. Elige \"1. Instalar Suwayomi\" para empezar."
@@ -167,6 +219,10 @@ $hint" "${items[@]}")"
         "$L_FOLDER")  do_folder ;;
         "$L_HIST")    do_history ;;
         "$L_MOBILE")  do_mobile ;;
+        "$L_UPDATE")  do_update ;;
+        "$L_BACKUP")  do_backup ;;
+        "$L_SCAN")    do_scan ;;
+        "$L_AUTO")    do_autostart ;;
     esac
     # Pequeña pausa para que el estado se actualice antes de volver a mostrar el menú
     sleep 1

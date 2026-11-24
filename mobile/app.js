@@ -2,30 +2,35 @@
   'use strict';
 
   const API_URL = '/api/graphql';
-  const PREFS_KEY = 'suwayomi_mobile_prefs_v2';
+  const PREFS_KEY = 'suwayomi_mobile_prefs_v3';
   const Offline = window.SuwayomiOffline;
+  const Extras = window.SuwayomiExtras;
 
   const DEFAULT_PREFS = {
     mode: 'vertical',     // 'vertical' (PDF continuo) | 'rtl' | 'ltr'
     fit: 'width',         // 'width' (100% ancho del movil) | 'screen'
     gap: false,           // false = 0px sin espacio entre paginas
     dim: 0,               // 0..70 filtro nocturno
-    miniStatus: true      // indicador discreto en esquina
+    miniStatus: true,     // indicador discreto en esquina
+    autoNext: true,       // paso automatico al siguiente capitulo al llegar al final en vertical
+    wakeLock: true,       // mantener pantalla encendida al leer
+    cropMargins: false,   // recorte automatico de margenes blancos
+    doublePage: true,     // doble pagina en horizontal / tablet (modo paginado)
+    autoDlNext: 0,        // 0 | 1 | 3 | 5 descargar siguientes N capitulos al abrir uno
+    autoDelRead: false    // borrar descarga del movil al terminar un capitulo
   };
 
   function loadPrefs() {
     try {
-      const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
-      return Object.assign({}, DEFAULT_PREFS, saved);
+      const prev = JSON.parse(localStorage.getItem(PREFS_KEY) || localStorage.getItem('suwayomi_mobile_prefs_v2') || '{}');
+      return Object.assign({}, DEFAULT_PREFS, prev);
     } catch {
       return Object.assign({}, DEFAULT_PREFS);
     }
   }
 
   function savePrefs() {
-    try {
-      localStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs));
-    } catch { }
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs)); } catch { }
   }
 
   const state = {
@@ -36,42 +41,54 @@
     categories: [],
     selectedCat: 'all',
     onlyDownloaded: false,
+    librarySort: 'title', // 'title' | 'lastRead' | 'unread' | 'added'
     librarySearch: '',
+    updates: [],
     recent: [],
     sources: [],
     activeSource: null,
-    sourceMode: 'POPULAR', // 'POPULAR' | 'LATEST' | 'SEARCH'
+    sourceMode: 'POPULAR',
     sourceQuery: '',
     sourcePage: 1,
     sourceHasNext: false,
     sourceMangas: [],
-    // Descargas locales (modo sin conexión tipo Spotify)
-    downloads: new Map(),         // chapterId -> record
-    downloadsByManga: new Map(),  // mangaId -> count
-    downloadQueue: [],            // [{ manga, chapters, chapter }]
-    activeDownload: null,         // { chapterId, done, total }
+    globalSearchQuery: '',
+    globalSearchResults: [],
+    // Descargas locales
+    downloads: new Map(),
+    downloadsByManga: new Map(),
+    downloadQueue: [],
+    downloadsPaused: false,
+    activeDownload: null,
     // Detalle de manga
     manga: null,
     mangaChapters: [],
-    chapterFilter: 'all', // 'all' | 'unread' | 'downloaded'
+    chapterFilter: 'all', // 'all' | 'unread' | 'downloaded' | 'bookmarked'
     chapterDesc: true,
     // Lector
     reader: {
       open: false,
       manga: null,
-      chapters: [],       // orden ascendente por sourceOrder (index 0 = Cap 1)
+      chapters: [],
       chapIdx: 0,
       pages: [],
       blobUrls: [],
       pageIdx: 0,
       chromeVisible: true,
+      zoomed: false,
       observer: null,
+      endObserver: null,
+      autoNextTimer: null,
+      readTickTimer: null,
       lastSavedPage: -1,
       markedRead: false,
       preloadedChapId: null,
       touchStartX: 0,
       touchStartY: 0,
-      touchMoved: false
+      touchMoved: false,
+      brightnessDrag: false,
+      brightnessStartDim: 0,
+      lastTapTime: 0
     }
   };
 
@@ -83,12 +100,16 @@
   const mainContent = $('mainContent');
   const bottomNav = $('bottomNav');
   const mangaView = $('mangaView');
+  const appSheetBackdrop = $('appSheetBackdrop');
+  const appSheet = $('appSheet');
   const readerView = $('readerView');
   const readerStage = $('readerStage');
   const readerDimmer = $('readerDimmer');
+  const readerBrightnessHud = $('readerBrightnessHud');
   const readerMiniStatus = $('readerMiniStatus');
   const readerMangaTitle = $('readerMangaTitle');
   const readerChapterTitle = $('readerChapterTitle');
+  const readerBookmarkBtn = $('readerBookmarkBtn');
   const readerSlider = $('readerSlider');
   const readerPageNow = $('readerPageNow');
   const readerPageTotal = $('readerPageTotal');
@@ -103,8 +124,81 @@
   const installBanner = $('installBanner');
   const installBannerBtn = $('installBannerBtn');
   const installBannerClose = $('installBannerClose');
+  const dlQueueBar = $('dlQueueBar');
+  const dlQueueInfo = $('dlQueueInfo');
+  const dlQueuePauseBtn = $('dlQueuePauseBtn');
+  const dlQueueOpenBtn = $('dlQueueOpenBtn');
+  const pinLockOverlay = $('pinLockOverlay');
+  const pinTitle = $('pinTitle');
+  const pinDots = $('pinDots');
+  const pinErr = $('pinErr');
+  const pinPad = $('pinPad');
 
-  // ---------------- Instalación PWA (una sola vez, sin volver a escanear QR) ----------------
+  // ---------------- Bloqueo con PIN ----------------
+  let pinBuffer = '';
+  let pinCallback = null;
+
+  function renderPinDots() {
+    const spans = pinDots.querySelectorAll('span');
+    spans.forEach((sp, i) => sp.classList.toggle('filled', i < pinBuffer.length));
+  }
+
+  function showPinPrompt(titleText, onDone) {
+    pinBuffer = '';
+    pinCallback = onDone;
+    pinTitle.textContent = titleText || 'Introduce tu PIN';
+    pinErr.textContent = '';
+    renderPinDots();
+    pinLockOverlay.classList.remove('hidden');
+  }
+
+  function hidePinPrompt() {
+    pinBuffer = '';
+    pinCallback = null;
+    pinLockOverlay.classList.add('hidden');
+  }
+
+  pinPad.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-pin]');
+    if (!btn) return;
+    const val = btn.dataset.pin;
+    if (val === 'clear') {
+      pinBuffer = '';
+      pinErr.textContent = '';
+      renderPinDots();
+      return;
+    }
+    if (val === 'back') {
+      pinBuffer = pinBuffer.slice(0, -1);
+      renderPinDots();
+      return;
+    }
+    if (pinBuffer.length >= 4) return;
+    pinBuffer += val;
+    renderPinDots();
+    if (pinBuffer.length === 4 && pinCallback) {
+      const code = pinBuffer;
+      const fn = pinCallback;
+      await fn(code);
+    }
+  });
+
+  function checkStartupPin() {
+    if (!Extras || !Extras.isPinLockedNow()) return;
+    showPinPrompt('Introduce tu PIN', async (code) => {
+      const ok = await Extras.verifyPin(code);
+      if (ok) {
+        Extras.markPinUnlocked();
+        hidePinPrompt();
+      } else {
+        pinBuffer = '';
+        pinErr.textContent = 'PIN incorrecto';
+        renderPinDots();
+      }
+    });
+  }
+
+  // ---------------- Instalación PWA ----------------
   let deferredInstallPrompt = null;
   const INSTALL_DISMISSED_KEY = 'suwayomi_install_dismissed_v1';
 
@@ -141,9 +235,9 @@
       return;
     }
     if (isIosBrowser()) {
-      alert('Para instalarla en iPhone/iPad:\n\n1. Pulsa el botón Compartir (cuadro con flecha abajo).\n2. Elige "Añadir a pantalla de inicio".\n\nYa no tendrás que volver a escanear el QR.');
+      alert('En iPhone/iPad:\n1. Pulsa Compartir.\n2. Elige "Añadir a pantalla de inicio".');
     } else {
-      alert('Para instalarla en tu móvil:\n\n1. Pulsa el menú de Chrome (los 3 puntos arriba a la derecha).\n2. Pulsa "Instalar aplicación" o "Añadir a pantalla de inicio".\n\nQuedará como una app en tu móvil y no tendrás que volver a escanear el QR.');
+      alert('En Chrome:\n1. Pulsa el menú (3 puntos arriba).\n2. Pulsa "Instalar aplicación" o "Añadir a pantalla de inicio".');
     }
   }
 
@@ -206,6 +300,20 @@
     return 'Paginado I→D';
   }
 
+  function effectiveReaderMode() {
+    const m = state.reader.manga;
+    if (m && Extras) {
+      const override = Extras.getMangaMode(m.id);
+      if (override) return override;
+    }
+    return state.prefs.mode;
+  }
+
+  function isDoublePageNow() {
+    const mode = effectiveReaderMode();
+    return mode !== 'vertical' && state.prefs.doublePage && window.innerWidth > window.innerHeight && window.innerWidth >= 680;
+  }
+
   function isDownloaded(chapterId) {
     return state.downloads.has(Number(chapterId));
   }
@@ -216,9 +324,7 @@
 
   function coverUrlFor(manga) {
     if (!manga) return '';
-    if (state.offline || !manga.thumbnailUrl) {
-      return `/movil/__offline__/cover/${manga.id}`;
-    }
+    if (state.offline || !manga.thumbnailUrl) return `/movil/__offline__/cover/${manga.id}`;
     return manga.thumbnailUrl;
   }
 
@@ -234,15 +340,23 @@
     });
   }
 
+  function openAppSheet(html) {
+    appSheet.innerHTML = html;
+    appSheetBackdrop.classList.remove('hidden');
+    appSheet.classList.remove('hidden');
+  }
+
+  function closeAppSheet() {
+    appSheetBackdrop.classList.add('hidden');
+    appSheet.classList.add('hidden');
+  }
+  appSheetBackdrop.addEventListener('click', closeAppSheet);
+
   function setOfflineMode(isOff) {
     const wasOff = state.offline;
     state.offline = !!isOff;
-    if (offlineBanner) {
-      offlineBanner.classList.toggle('hidden', !state.offline);
-    }
-    if (wasOff && !state.offline) {
-      flushPendingSyncs();
-    }
+    if (offlineBanner) offlineBanner.classList.toggle('hidden', !state.offline);
+    if (wasOff && !state.offline) flushPendingSyncs();
   }
 
   if (offlineRetryBtn) {
@@ -254,22 +368,16 @@
   }
 
   window.addEventListener('online', () => {
-    if (state.offline) {
-      setOfflineMode(false);
-      handleRoute();
-    }
+    if (state.offline) { setOfflineMode(false); handleRoute(); }
   });
 
   window.addEventListener('offline', () => {
     setOfflineMode(true);
-    if (!state.reader.open && mangaView.classList.contains('hidden')) {
-      renderCurrentTab();
-    } else if (!mangaView.classList.contains('hidden') && state.manga) {
-      drawMangaDetail();
-    }
+    if (!state.reader.open && mangaView.classList.contains('hidden')) renderCurrentTab();
+    else if (!mangaView.classList.contains('hidden') && state.manga) drawMangaDetail();
   });
 
-  // ---------------- Índice y cola de descargas offline ----------------
+  // ---------------- Cola de descargas pausable / cancelable ----------------
   async function refreshDownloadsIndex() {
     if (!Offline) return;
     const all = await Offline.listDownloads();
@@ -282,19 +390,99 @@
     }
   }
 
-  function refreshVisibleAfterDownload() {
-    if (!mangaView.classList.contains('hidden') && state.manga) {
-      drawMangaDetail();
-    } else if (state.tab === 'library') {
-      drawLibraryGrid();
-    } else if (state.tab === 'settings') {
-      renderSettings();
+  function updateDownloadQueueBar() {
+    const totalPending = (state.activeDownload ? 1 : 0) + state.downloadQueue.length;
+    if (totalPending === 0) {
+      dlQueueBar.classList.add('hidden');
+      return;
+    }
+    dlQueueBar.classList.remove('hidden');
+    if (state.downloadsPaused) {
+      dlQueueInfo.textContent = `Descargas en pausa (${totalPending} pendiente(s))`;
+      dlQueuePauseBtn.textContent = 'Reanudar';
+    } else if (state.activeDownload) {
+      const a = state.activeDownload;
+      const pct = a.total > 0 ? ` (${a.done}/${a.total})` : '';
+      dlQueueInfo.textContent = `Descargando ${a.name || ''}${pct} · ${totalPending} en cola`;
+      dlQueuePauseBtn.textContent = 'Pausar';
+    } else {
+      dlQueueInfo.textContent = `${totalPending} capítulo(s) en cola`;
+      dlQueuePauseBtn.textContent = 'Pausar';
     }
   }
 
-  function enqueueChapterDownload(manga, chapters, chapter) {
+  function openDownloadQueueSheet() {
+    const items = [];
+    if (state.activeDownload) {
+      items.push({ id: state.activeDownload.chapterId, title: state.activeDownload.mangaTitle, name: state.activeDownload.name, active: true, prog: state.activeDownload.total ? `${state.activeDownload.done}/${state.activeDownload.total}` : '...' });
+    }
+    state.downloadQueue.forEach((q) => {
+      items.push({ id: q.chapter.id, title: q.manga ? q.manga.title : '', name: q.chapter.name, active: false, prog: 'En cola' });
+    });
+
+    openAppSheet(`
+      <div class="sheet-title">
+        <span>Cola de descargas (${items.length})</span>
+        <button id="qCloseBtn" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button id="qTogglePause" class="secondary-btn" type="button" style="flex:1">${state.downloadsPaused ? 'Reanudar cola' : 'Pausar cola'}</button>
+        <button id="qCancelAll" class="secondary-btn" type="button" style="flex:1;color:#ff8690;border-color:rgba(255,77,90,0.35)">Cancelar todo</button>
+      </div>
+      ${items.length ? items.map((it) => `
+        <div class="dl-storage-row">
+          <div style="min-width:0;flex:1">
+            <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.name)}</div>
+            <div style="font-size:11.5px;color:var(--muted)">${esc(it.title)} · ${it.prog}</div>
+          </div>
+          ${it.active ? '' : `<button class="list-del-btn" data-q-cancel="${it.id}" type="button" title="Quitar de cola">×</button>`}
+        </div>
+      `).join('') : '<p style="color:var(--muted);font-size:13px">No hay descargas pendientes.</p>'}
+    `);
+
+    $('qCloseBtn').addEventListener('click', closeAppSheet);
+    $('qTogglePause').addEventListener('click', () => {
+      state.downloadsPaused = !state.downloadsPaused;
+      updateDownloadQueueBar();
+      if (!state.downloadsPaused) processDownloadQueue();
+      openDownloadQueueSheet();
+    });
+    $('qCancelAll').addEventListener('click', () => {
+      state.downloadQueue = [];
+      state.downloadsPaused = false;
+      updateDownloadQueueBar();
+      refreshVisibleAfterDownload();
+      closeAppSheet();
+      showToast('Cola de descargas vaciada');
+    });
+    appSheet.querySelectorAll('[data-q-cancel]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const cid = Number(b.dataset.qCancel);
+        state.downloadQueue = state.downloadQueue.filter((q) => q.chapter.id !== cid);
+        updateDownloadQueueBar();
+        refreshVisibleAfterDownload();
+        openDownloadQueueSheet();
+      });
+    });
+  }
+
+  dlQueuePauseBtn.addEventListener('click', () => {
+    state.downloadsPaused = !state.downloadsPaused;
+    updateDownloadQueueBar();
+    if (!state.downloadsPaused) processDownloadQueue();
+  });
+  dlQueueOpenBtn.addEventListener('click', openDownloadQueueSheet);
+
+  function refreshVisibleAfterDownload() {
+    updateDownloadQueueBar();
+    if (!mangaView.classList.contains('hidden') && state.manga) drawMangaDetail();
+    else if (state.tab === 'library') drawLibraryGrid();
+    else if (state.tab === 'settings') renderSettings();
+  }
+
+  function enqueueChapterDownload(manga, chapters, chapter, silent = false) {
     if (state.offline) {
-      showToast('Sin conexión: conéctate al PC para descargar capítulos.');
+      if (!silent) showToast('Sin conexión: conéctate al PC para descargar capítulos.');
       return;
     }
     if (isDownloaded(chapter.id)) return;
@@ -308,12 +496,18 @@
 
   let downloadingLoop = false;
   async function processDownloadQueue() {
-    if (downloadingLoop) return;
+    if (downloadingLoop || state.downloadsPaused) return;
     downloadingLoop = true;
     try {
-      while (state.downloadQueue.length > 0) {
+      while (state.downloadQueue.length > 0 && !state.downloadsPaused) {
         const job = state.downloadQueue.shift();
-        state.activeDownload = { chapterId: job.chapter.id, done: 0, total: 0 };
+        state.activeDownload = {
+          chapterId: job.chapter.id,
+          name: job.chapter.name,
+          mangaTitle: job.manga ? job.manga.title : '',
+          done: 0,
+          total: 0
+        };
         refreshVisibleAfterDownload();
 
         try {
@@ -331,17 +525,17 @@
               if (state.activeDownload && state.activeDownload.chapterId === job.chapter.id) {
                 state.activeDownload.done = done;
                 state.activeDownload.total = total;
+                updateDownloadQueueBar();
                 const btn = mangaView.querySelector(`.chap-dl-btn[data-dl-id="${job.chapter.id}"]`);
                 if (btn) btn.textContent = `${done}/${total}`;
               }
             }
           });
           await refreshDownloadsIndex();
-          showToast(`Descargado: ${job.chapter.name}`);
         } catch (err) {
           showToast(`Error descargando ${job.chapter.name}: ${err.message || ''}`);
           if (!navigator.onLine) {
-            state.downloadQueue = [];
+            state.downloadsPaused = true;
             setOfflineMode(true);
             break;
           }
@@ -352,6 +546,7 @@
       }
     } finally {
       downloadingLoop = false;
+      updateDownloadQueueBar();
     }
   }
 
@@ -371,9 +566,7 @@
         break;
       }
     }
-    if (synced > 0) {
-      showToast(`Progreso sincronizado (${synced} cap.)`);
-    }
+    if (synced > 0) showToast(`Progreso sincronizado (${synced} cap.)`);
   }
 
   function warmLibraryCovers(mangas) {
@@ -383,9 +576,7 @@
     async function worker() {
       while (idx < list.length && !state.offline) {
         const m = list[idx++];
-        if (m && m.id && m.thumbnailUrl) {
-          await Offline.cacheCover(m.id, m.thumbnailUrl);
-        }
+        if (m && m.id && m.thumbnailUrl) await Offline.cacheCover(m.id, m.thumbnailUrl);
       }
     }
     for (let i = 0; i < 3; i++) worker();
@@ -421,10 +612,25 @@
       }
       mangas(condition: { inLibrary: true }, order: [{ by: TITLE, byType: ASC }]) {
         nodes {
-          id title thumbnailUrl inLibrary unreadCount
+          id title thumbnailUrl inLibrary inLibraryAt unreadCount
           categories { nodes { id name } }
           firstUnreadChapter { id name chapterNumber sourceOrder }
           lastReadChapter { id name chapterNumber sourceOrder lastReadAt lastPageRead }
+        }
+      }
+    }
+  `;
+
+  const Q_UPDATES = `
+    query UpdatesList {
+      chapters(
+        filter: { inLibrary: { equalTo: true } }
+        order: [{ by: FETCHED_AT, byType: DESC }, { by: UPLOAD_DATE, byType: DESC }]
+        first: 60
+      ) {
+        nodes {
+          id name chapterNumber mangaId fetchedAt uploadDate isRead lastPageRead pageCount
+          manga { id title thumbnailUrl inLibrary }
         }
       }
     }
@@ -458,6 +664,7 @@
       manga(id: $id) {
         id title thumbnailUrl inLibrary initialized status author artist description genre sourceId
         unreadCount
+        categories { nodes { id name } }
         source { id name displayName }
       }
       chapters(condition: { mangaId: $id }, order: [{ by: SOURCE_ORDER, byType: DESC }]) {
@@ -475,6 +682,7 @@
         manga {
           id title thumbnailUrl inLibrary initialized status author artist description genre sourceId
           unreadCount
+          categories { nodes { id name } }
           source { id name displayName }
         }
         chapters {
@@ -510,6 +718,38 @@
     }
   `;
 
+  const M_UPDATE_LIBRARY = `
+    mutation UpdateLibrary {
+      updateLibrary(input: {}) { clientMutationId }
+    }
+  `;
+
+  const M_CREATE_CATEGORY = `
+    mutation CreateCategory($name: String!) {
+      createCategory(input: { name: $name }) { category { id name order } }
+    }
+  `;
+
+  const M_DELETE_CATEGORY = `
+    mutation DeleteCategory($id: Int!) {
+      deleteCategory(input: { categoryId: $id }) { category { id } }
+    }
+  `;
+
+  const M_UPDATE_MANGA_CATS = `
+    mutation UpdateMangaCats($id: Int!, $catIds: [Int!]!) {
+      updateMangaCategories(input: { id: $id, patch: { clearCategories: true, addToCategories: $catIds } }) {
+        manga { id categories { nodes { id name } } }
+      }
+    }
+  `;
+
+  const M_CREATE_BACKUP = `
+    mutation CreateBackup {
+      createBackup(input: {}) { url }
+    }
+  `;
+
   const M_SOURCE_MANGAS = `
     mutation FetchSource($input: FetchSourceMangaInput!) {
       fetchSourceManga(input: $input) {
@@ -519,13 +759,10 @@
     }
   `;
 
-  // ---------------- Enrutado (botón Atrás del móvil) ----------------
+  // ---------------- Enrutado ----------------
   function navigateHash(hash) {
-    if (location.hash === hash) {
-      handleRoute();
-    } else {
-      location.hash = hash;
-    }
+    if (location.hash === hash) handleRoute();
+    else location.hash = hash;
   }
 
   window.addEventListener('hashchange', handleRoute);
@@ -538,8 +775,9 @@
     if (view === 'read' && parts[1] && parts[2]) {
       const mId = parseInt(parts[1], 10);
       const cId = parseInt(parts[2], 10);
+      const pg = parts[3] ? parseInt(parts[3], 10) : null;
       if (mId && cId) {
-        await openReader(mId, cId);
+        await openReader(mId, cId, pg);
         return;
       }
     } else if (state.reader.open) {
@@ -556,7 +794,7 @@
       mangaView.classList.add('hidden');
     }
 
-    const validTabs = ['library', 'recent', 'explore', 'settings'];
+    const validTabs = ['library', 'updates', 'recent', 'explore', 'settings'];
     state.tab = validTabs.includes(view) ? view : 'library';
     updateBottomNav();
     renderCurrentTab();
@@ -574,23 +812,82 @@
     navigateHash('#' + btn.dataset.tab);
   });
 
-  // ---------------- Pestañas ----------------
   async function renderCurrentTab(forceReload = false) {
     if (state.tab === 'library') await renderLibrary(forceReload);
+    else if (state.tab === 'updates') await renderUpdates();
     else if (state.tab === 'recent') await renderRecent();
     else if (state.tab === 'explore') await renderExplore();
     else if (state.tab === 'settings') await renderSettings();
   }
 
-  // --- BIBLIOTECA ---
+  // ---------------- BIBLIOTECA ----------------
+  function openCategoriesManager() {
+    const custom = state.categories.filter((c) => c.id !== 0);
+    openAppSheet(`
+      <div class="sheet-title">
+        <span>Categorías</span>
+        <button id="catClose" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      <form id="catAddForm" style="display:flex;gap:8px;margin-bottom:12px">
+        <input id="catNewName" type="text" placeholder="Nueva categoría..." style="flex:1;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:8px 10px">
+        <button class="primary-btn" type="submit" style="width:auto;padding:8px 14px;font-size:13px">Crear</button>
+      </form>
+      ${custom.length ? custom.map((c) => `
+        <div class="dl-storage-row">
+          <strong style="font-size:13.5px">${esc(c.name)}</strong>
+          <button class="list-del-btn" data-del-cat="${c.id}" type="button" title="Eliminar categoría">×</button>
+        </div>
+      `).join('') : '<p style="color:var(--muted);font-size:13px">Aún no has creado categorías personalizadas.</p>'}
+    `);
+
+    $('catClose').addEventListener('click', closeAppSheet);
+    $('catAddForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = $('catNewName').value.trim();
+      if (!name) return;
+      try {
+        await gql(M_CREATE_CATEGORY, { name });
+        showToast(`Categoría "${name}" creada`);
+        closeAppSheet();
+        renderLibrary(true);
+      } catch (err) {
+        showToast('Error creando categoría: ' + (err.message || ''));
+      }
+    });
+    appSheet.querySelectorAll('[data-del-cat]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        if (!confirm('¿Eliminar esta categoría? (No borra los mangas).')) return;
+        try {
+          await gql(M_DELETE_CATEGORY, { id: Number(b.dataset.delCat) });
+          showToast('Categoría eliminada');
+          closeAppSheet();
+          renderLibrary(true);
+        } catch (err) {
+          showToast('Error eliminando categoría');
+        }
+      });
+    });
+  }
+
   async function renderLibrary(forceReload = false) {
     headerTitle.textContent = 'Biblioteca';
     headerActions.innerHTML = `
-      <button id="libRefreshBtn" class="icon-btn" type="button" aria-label="Recargar">
+      ${!state.offline ? `<button id="libCatsBtn" class="secondary-btn" type="button" style="padding:6px 9px;font-size:11.5px">Categorías</button>` : ''}
+      <button id="libUpdateBtn" class="icon-btn" type="button" title="Actualizar biblioteca" aria-label="Actualizar biblioteca">
         <svg viewBox="0 0 24 24"><path d="M17.6 6.4A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4l-2.4 2.4z"/></svg>
       </button>
     `;
-    $('libRefreshBtn').addEventListener('click', () => renderLibrary(true));
+    const catsBtn = $('libCatsBtn');
+    if (catsBtn) catsBtn.addEventListener('click', openCategoriesManager);
+    $('libUpdateBtn').addEventListener('click', async () => {
+      if (!state.offline) {
+        try {
+          await gql(M_UPDATE_LIBRARY);
+          showToast('Actualizando capítulos nuevos en el servidor...');
+        } catch { }
+      }
+      renderLibrary(true);
+    });
 
     await refreshDownloadsIndex();
 
@@ -611,8 +908,6 @@
         const snap = Offline ? await Offline.getSnapshot('library') : null;
         state.categories = (snap && snap.categories) || [];
         state.library = (snap && snap.library) || [];
-
-        // Asegurar que aparezcan mangas que tengan capítulos descargados aunque no estuvieran en el snapshot
         if (Offline) {
           const savedMangas = await Offline.getAllSavedMangas();
           const knownIds = new Set(state.library.map((m) => m.id));
@@ -625,15 +920,22 @@
       }
     }
 
-    // Buscador + filtros (categorías + Solo descargados)
     headerSub.classList.remove('hidden');
     const usedCats = state.categories.filter((c) => c.id !== 0);
     const dlMangasCount = state.library.filter((m) => mangaDownloadCount(m.id) > 0).length;
 
     headerSub.innerHTML = `
-      <div class="search-box">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="#8e98a8"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
-        <input id="libSearchInput" type="search" placeholder="Buscar en tu biblioteca..." value="${esc(state.librarySearch)}">
+      <div style="display:flex;gap:8px;align-items:center">
+        <div class="search-box" style="flex:1">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="#8e98a8"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+          <input id="libSearchInput" type="search" placeholder="Buscar en tu biblioteca..." value="${esc(state.librarySearch)}">
+        </div>
+        <select id="libSortSelect" class="select-pill" aria-label="Ordenar biblioteca">
+          <option value="title" ${state.librarySort === 'title' ? 'selected' : ''}>A-Z</option>
+          <option value="lastRead" ${state.librarySort === 'lastRead' ? 'selected' : ''}>Últ. leído</option>
+          <option value="unread" ${state.librarySort === 'unread' ? 'selected' : ''}>Sin leer</option>
+          <option value="added" ${state.librarySort === 'added' ? 'selected' : ''}>Añadidos</option>
+        </select>
       </div>
       <div class="chips-row">
         <button class="chip ${state.onlyDownloaded ? 'active' : ''}" id="chipOnlyDl">↓ Descargados (${dlMangasCount})</button>
@@ -644,6 +946,10 @@
 
     $('libSearchInput').addEventListener('input', (e) => {
       state.librarySearch = e.target.value;
+      drawLibraryGrid();
+    });
+    $('libSortSelect').addEventListener('change', (e) => {
+      state.librarySort = e.target.value;
       drawLibraryGrid();
     });
     $('chipOnlyDl').addEventListener('click', () => {
@@ -673,40 +979,35 @@
       return true;
     });
 
-    // En modo sin conexión, mostrar primero los mangas con capítulos descargados
-    if (state.offline) {
-      list = list.slice().sort((a, b) => {
+    list = list.slice().sort((a, b) => {
+      if (state.offline) {
         const da = mangaDownloadCount(a.id) > 0 ? 1 : 0;
         const db = mangaDownloadCount(b.id) > 0 ? 1 : 0;
         if (db !== da) return db - da;
-        return (a.title || '').localeCompare(b.title || '');
-      });
-    }
+      }
+      if (state.librarySort === 'lastRead') {
+        const ta = Number((a.lastReadChapter && a.lastReadChapter.lastReadAt) || 0);
+        const tb = Number((b.lastReadChapter && b.lastReadChapter.lastReadAt) || 0);
+        if (tb !== ta) return tb - ta;
+      } else if (state.librarySort === 'unread') {
+        const ua = Number(a.unreadCount || 0);
+        const ub = Number(b.unreadCount || 0);
+        if (ub !== ua) return ub - ua;
+      } else if (state.librarySort === 'added') {
+        const ia = Number(a.inLibraryAt || 0);
+        const ib = Number(b.inLibraryAt || 0);
+        if (ib !== ia) return ib - ia;
+      }
+      return (a.title || '').localeCompare(b.title || '');
+    });
 
     if (!list.length) {
-      const msgTitle = state.onlyDownloaded
-        ? 'No tienes capítulos descargados'
-        : (state.offline
-          ? 'Sin conexión y sin datos guardados'
-          : (state.library.length ? 'Sin coincidencias' : 'Tu biblioteca está vacía'));
-      const msgDesc = state.onlyDownloaded
-        ? 'Abre cualquier manga con el PC encendido y pulsa ↓ para descargar capítulos y leerlos sin conexión.'
-        : (state.offline
-          ? 'Enciende el PC una vez, abre la app y descarga los capítulos que quieras leer sin conexión.'
-          : (state.library.length ? 'Prueba con otro filtro o búsqueda.' : 'Ve a Explorar para buscar un manga y añadirlo a tu biblioteca.'));
       mainContent.innerHTML = `
         <div class="empty-state">
-          <h3>${msgTitle}</h3>
-          <p>${msgDesc}</p>
-          ${state.offline
-            ? '<button id="retryLibOff" class="primary-btn" style="max-width:220px">Reintentar conexión</button>'
-            : (!state.library.length ? '<button id="goExploreBtn" class="primary-btn" style="max-width:220px">Ir a Explorar</button>' : '')}
+          <h3>${state.onlyDownloaded ? 'Sin capítulos descargados' : (state.offline ? 'Sin conexión y sin datos guardados' : 'Sin resultados')}</h3>
+          <p>${state.onlyDownloaded ? 'Abre un manga con el PC encendido y pulsa ↓ para descargar capítulos.' : 'Prueba con otro filtro o añade mangas desde Explorar.'}</p>
         </div>
       `;
-      const b = $('goExploreBtn');
-      if (b) b.addEventListener('click', () => navigateHash('#explore'));
-      const rBtn = $('retryLibOff');
-      if (rBtn) rBtn.addEventListener('click', () => renderLibrary(true));
       return;
     }
 
@@ -732,7 +1033,83 @@
     });
   }
 
-  // --- RECIENTES ---
+  // ---------------- NOVEDADES ----------------
+  async function renderUpdates() {
+    headerTitle.textContent = 'Novedades';
+    headerActions.innerHTML = `
+      <button id="updRefreshBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">Buscar nuevos</button>
+    `;
+    $('updRefreshBtn').addEventListener('click', async () => {
+      if (state.offline) { showToast('Sin conexión con el PC'); return; }
+      try {
+        await gql(M_UPDATE_LIBRARY);
+        showToast('Buscando capítulos nuevos en tu biblioteca...');
+        setTimeout(() => { if (state.tab === 'updates') renderUpdates(); }, 3000);
+      } catch {
+        showToast('No se pudo actualizar la biblioteca');
+      }
+    });
+    headerSub.classList.add('hidden');
+    mainContent.innerHTML = '<div class="spinner"></div>';
+    await refreshDownloadsIndex();
+
+    try {
+      const data = await gql(Q_UPDATES, {}, 8000);
+      state.updates = (data.chapters && data.chapters.nodes) || [];
+      setOfflineMode(false);
+      if (Offline) Offline.saveSnapshot('updates', state.updates);
+    } catch {
+      setOfflineMode(true);
+      state.updates = (Offline ? await Offline.getSnapshot('updates') : null) || [];
+    }
+
+    if (!state.updates.length) {
+      mainContent.innerHTML = `
+        <div class="empty-state">
+          <h3>Sin novedades todavía</h3>
+          <p>Pulsa "Buscar nuevos" para comprobar si hay capítulos recientes en tu biblioteca.</p>
+        </div>
+      `;
+      return;
+    }
+
+    mainContent.innerHTML = `<div class="list-stack">${state.updates.map((ch) => {
+      if (!ch.manga) return '';
+      const dl = isDownloaded(ch.id);
+      const locked = state.offline && !dl;
+      return `
+        <div class="list-card ${locked ? 'offline-dim' : ''}" data-manga-id="${ch.manga.id}">
+          <img class="list-thumb" src="${esc(coverUrlFor(ch.manga))}" data-cover-id="${ch.manga.id}" alt="" loading="lazy">
+          <div class="list-body">
+            <div class="list-title">${esc(ch.manga.title)}</div>
+            <div class="list-sub" style="${ch.isRead ? '' : 'color:#fff;font-weight:600'}">${esc(ch.name)} ${dl ? '· ✓' : ''}</div>
+            <div class="list-sub">${formatDate(ch.uploadDate || ch.fetchedAt)}</div>
+          </div>
+          <button class="list-cta" data-upd-read="${ch.manga.id}:${ch.id}" type="button">${locked ? 'Sin red' : 'Leer'}</button>
+        </div>
+      `;
+    }).join('')}</div>`;
+
+    attachCoverFallbacks(mainContent);
+    mainContent.querySelectorAll('.list-card').forEach((card) => {
+      card.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-upd-read]');
+        if (btn) {
+          e.stopPropagation();
+          const [mId, cId] = btn.dataset.updRead.split(':').map(Number);
+          if (state.offline && !isDownloaded(cId)) {
+            showToast('No descargado. Conéctate al PC para leer este capítulo.');
+            return;
+          }
+          navigateHash(`#read/${mId}/${cId}`);
+          return;
+        }
+        navigateHash('#manga/' + card.dataset.mangaId);
+      });
+    });
+  }
+
+  // ---------------- RECIENTES + BORRAR HISTORIAL (TOTAL O INDIVIDUAL) ----------------
   let clearingHistory = false;
 
   async function runClearHistory(mangaId = 0, mangaTitle = '') {
@@ -740,8 +1117,8 @@
     const isSingle = Number(mangaId) > 0;
     if (state.offline) {
       const msgOff = isSingle
-        ? `Estás sin conexión con el PC. ¿Quieres quitar "${mangaTitle}" solo de la lista local de recientes en este móvil?`
-        : 'Estás sin conexión con el PC. ¿Quieres limpiar solo la lista local de recientes en este móvil? (Para borrar también el historial del servidor, hazlo cuando el PC esté encendido).';
+        ? `Estás sin conexión con el PC. ¿Quitar "${mangaTitle}" solo de recientes locales en este móvil?`
+        : 'Estás sin conexión con el PC. ¿Limpiar solo la lista local de recientes en este móvil?';
       if (confirm(msgOff)) {
         state.recent = isSingle
           ? state.recent.filter((ch) => !ch.manga || Number(ch.manga.id) !== Number(mangaId))
@@ -760,8 +1137,7 @@
       '• Los capítulos siguen marcados como leídos.\n' +
       '• Se conservan la biblioteca, el progreso y las descargas.\n' +
       '• Se hace copia de seguridad automática de la base de datos.\n' +
-      '• Suwayomi se reiniciará unos segundos.\n\n' +
-      '¿Continuar?'
+      '• Suwayomi se reiniciará unos segundos.\n\n¿Continuar?'
     );
     if (!ok) return;
 
@@ -785,9 +1161,7 @@
       if (timer) clearTimeout(timer);
       let data = {};
       try { data = await res.json(); } catch { }
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || `Error HTTP ${res.status}`);
-      }
+      if (!res.ok || !data.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
       state.recent = isSingle
         ? state.recent.filter((ch) => !ch.manga || Number(ch.manga.id) !== Number(mangaId))
         : [];
@@ -826,15 +1200,14 @@
       if (Offline) Offline.saveSnapshot('recent', state.recent);
     } catch {
       setOfflineMode(true);
-      const snap = Offline ? await Offline.getSnapshot('recent') : null;
-      state.recent = snap || [];
+      state.recent = (Offline ? await Offline.getSnapshot('recent') : null) || [];
     }
 
     if (!state.recent.length) {
       mainContent.innerHTML = `
         <div class="empty-state">
           <h3>${state.offline ? 'Sin lecturas recientes guardadas' : 'Aún no hay lecturas recientes'}</h3>
-          <p>${state.offline ? 'Tus capítulos descargados están disponibles en Biblioteca.' : 'Cuando abras un capítulo aparecerá aquí para que puedas retomarlo con un toque.'}</p>
+          <p>${state.offline ? 'Tus capítulos descargados están disponibles en Biblioteca.' : 'Cuando abras un capítulo aparecerá aquí para retomarlo con un toque.'}</p>
         </div>
       `;
       return;
@@ -855,7 +1228,7 @@
             <div class="list-sub">${pageTxt} · ${formatDate(ch.lastReadAt)}</div>
           </div>
           <button class="list-cta" data-read-manga="${ch.manga.id}" data-read-chap="${ch.id}" type="button">${locked ? 'Sin red' : 'Leer'}</button>
-          <button class="list-del-btn" data-del-hist-manga="${ch.manga.id}" data-del-hist-title="${esc(ch.manga.title)}" type="button" title="Quitar este manga del historial" aria-label="Quitar del historial">×</button>
+          <button class="list-del-btn" data-del-hist-manga="${ch.manga.id}" data-del-hist-title="${esc(ch.manga.title)}" type="button" title="Quitar del historial" aria-label="Quitar del historial">×</button>
         </div>
       `;
     }).join('')}</div>`;
@@ -885,7 +1258,62 @@
     });
   }
 
-  // --- EXPLORAR ---
+  // ---------------- EXPLORAR + BÚSQUEDA GLOBAL ----------------
+  async function runGlobalSearch(query) {
+    state.globalSearchQuery = query;
+    state.globalSearchResults = [];
+    if (!query) { renderExplore(); return; }
+
+    mainContent.innerHTML = `<div class="empty-state"><div class="spinner"></div><p>Buscando "${esc(query)}" en ${state.sources.length} fuente(s)...</p></div>`;
+    const results = await Promise.all(state.sources.map(async (src) => {
+      try {
+        const data = await gql(M_SOURCE_MANGAS, {
+          input: { source: String(src.id), type: 'SEARCH', page: 1, query }
+        }, 12000);
+        const mangas = (data.fetchSourceManga && data.fetchSourceManga.mangas) || [];
+        return { source: src, mangas: mangas.slice(0, 12) };
+      } catch {
+        return { source: src, mangas: [] };
+      }
+    }));
+    state.globalSearchResults = results.filter((r) => r.mangas.length > 0);
+    drawGlobalSearchResults();
+  }
+
+  function drawGlobalSearchResults() {
+    if (!state.globalSearchResults.length) {
+      mainContent.innerHTML = `
+        <div class="empty-state">
+          <h3>Sin resultados para "${esc(state.globalSearchQuery)}"</h3>
+          <p>Prueba con otro término o revisa tus fuentes instaladas.</p>
+          <button id="clearGlobalBtn" class="secondary-btn" type="button">Ver fuentes</button>
+        </div>
+      `;
+      $('clearGlobalBtn').addEventListener('click', () => { state.globalSearchQuery = ''; renderExplore(); });
+      return;
+    }
+
+    mainContent.innerHTML = state.globalSearchResults.map((grp) => `
+      <div style="margin-bottom:18px">
+        <div style="font-size:13px;font-weight:700;color:var(--muted);margin:0 0 8px">${esc(grp.source.name)} (${grp.mangas.length})</div>
+        <div class="manga-grid">${grp.mangas.map((m) => `
+          <div class="manga-card" data-manga-id="${m.id}">
+            <div class="manga-cover-wrap">
+              <img src="${esc(m.thumbnailUrl || '')}" alt="" loading="lazy">
+              <div class="manga-cover-grad"></div>
+              ${m.inLibrary ? '<span class="manga-badge in-lib">En biblioteca</span>' : ''}
+              <div class="manga-card-title">${esc(m.title)}</div>
+            </div>
+          </div>
+        `).join('')}</div>
+      </div>
+    `).join('');
+
+    mainContent.querySelectorAll('.manga-card').forEach((card) => {
+      card.addEventListener('click', () => navigateHash('#manga/' + card.dataset.mangaId));
+    });
+  }
+
   async function renderExplore() {
     if (state.activeSource && !state.offline) {
       renderSourceBrowser();
@@ -908,7 +1336,7 @@
       mainContent.innerHTML = `
         <div class="empty-state">
           <h3>Explorar requiere conexión con tu PC</h3>
-          <p>El servidor está apagado o sin red. Mientras tanto puedes leer tus capítulos descargados en Biblioteca.</p>
+          <p>Mientras el PC está apagado puedes leer tus capítulos descargados en Biblioteca.</p>
           <div style="display:flex;gap:8px;justify-content:center">
             <button id="expGoLib" class="primary-btn" style="max-width:170px">Ir a Biblioteca</button>
             <button id="expRetry" class="secondary-btn">Reintentar</button>
@@ -928,6 +1356,23 @@
           <a href="/" class="primary-btn" style="display:inline-block;max-width:240px;text-decoration:none">Abrir Suwayomi completo</a>
         </div>
       `;
+      return;
+    }
+
+    headerSub.classList.remove('hidden');
+    headerSub.innerHTML = `
+      <form id="globalSearchForm" class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="#8e98a8"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+        <input id="globalSearchInput" type="search" placeholder="Buscar en todas las fuentes..." value="${esc(state.globalSearchQuery)}">
+      </form>
+    `;
+    $('globalSearchForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      runGlobalSearch($('globalSearchInput').value.trim());
+    });
+
+    if (state.globalSearchQuery && state.globalSearchResults.length) {
+      drawGlobalSearchResults();
       return;
     }
 
@@ -959,13 +1404,8 @@
   async function renderSourceBrowser(loadNow = false) {
     const src = state.activeSource;
     headerTitle.textContent = src.name;
-    headerActions.innerHTML = `
-      <button id="srcBackBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">‹ Fuentes</button>
-    `;
-    $('srcBackBtn').addEventListener('click', () => {
-      state.activeSource = null;
-      renderExplore();
-    });
+    headerActions.innerHTML = `<button id="srcBackBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">‹ Fuentes</button>`;
+    $('srcBackBtn').addEventListener('click', () => { state.activeSource = null; renderExplore(); });
 
     headerSub.classList.remove('hidden');
     headerSub.innerHTML = `
@@ -998,21 +1438,14 @@
       });
     });
 
-    if (loadNow || !state.sourceMangas.length) {
-      await loadSourcePage();
-    } else {
-      drawSourceGrid();
-    }
+    if (loadNow || !state.sourceMangas.length) await loadSourcePage();
+    else drawSourceGrid();
   }
 
   async function loadSourcePage() {
     if (state.sourcePage === 1) mainContent.innerHTML = '<div class="spinner"></div>';
     try {
-      const input = {
-        source: String(state.activeSource.id),
-        type: state.sourceMode,
-        page: state.sourcePage
-      };
+      const input = { source: String(state.activeSource.id), type: state.sourceMode, page: state.sourcePage };
       if (state.sourceMode === 'SEARCH') input.query = state.sourceQuery;
       const data = await gql(M_SOURCE_MANGAS, { input });
       const res = data.fetchSourceManga || { mangas: [], hasNextPage: false };
@@ -1058,7 +1491,7 @@
     }
   }
 
-  // --- AJUSTES ---
+  // ---------------- AJUSTES (Descargas, Cuota, Estadísticas, Marcadores, PIN, Backup) ----------------
   async function renderSettings() {
     headerTitle.textContent = 'Ajustes';
     headerActions.innerHTML = '';
@@ -1069,8 +1502,10 @@
     const allDl = Offline ? await Offline.listDownloads() : [];
     const pendingSyncs = Offline ? await Offline.getPendingSyncs() : [];
     const totalBytes = allDl.reduce((acc, d) => acc + (d.bytes || 0), 0);
+    const est = Extras ? await Extras.getStorageEstimate() : null;
+    const stats = Extras ? Extras.getStats() : { chaptersCompleted: 0, secondsRead: 0, pagesViewed: 0 };
+    const bookmarks = Extras ? Extras.getPageBookmarks() : [];
 
-    // Agrupar descargas por manga para gestión de almacenamiento
     const byManga = new Map();
     for (const d of allDl) {
       const cur = byManga.get(d.mangaId) || { mangaId: d.mangaId, title: d.mangaTitle || `Manga #${d.mangaId}`, count: 0, bytes: 0 };
@@ -1080,14 +1515,51 @@
     }
     const mangaGroups = Array.from(byManga.values()).sort((a, b) => b.bytes - a.bytes);
 
+    let quotaHtml = '';
+    if (est && est.quota > 0) {
+      const pct = Math.min(100, Math.round((est.usage / est.quota) * 100));
+      quotaHtml = `
+        <div style="font-size:11.5px;color:var(--muted)">
+          Espacio del navegador: ${Offline.formatBytes(est.usage)} / ${Offline.formatBytes(est.quota)} (${pct}%)
+          ${pct >= 80 ? ' · <strong style="color:#ff8690">Poco espacio</strong>' : ''}
+        </div>
+        <div class="quota-bar-track"><div class="quota-bar-fill ${pct >= 80 ? 'warn' : ''}" style="width:${Math.max(2, pct)}%"></div></div>
+      `;
+    }
+
+    const minsRead = Math.round((stats.secondsRead || 0) / 60);
+
     mainContent.innerHTML = `
       <div class="settings-card">
-        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Descargas sin conexión (tipo Spotify)</div>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
-          ${allDl.length} capítulo(s) en este móvil · <strong>${Offline ? Offline.formatBytes(totalBytes) : '0 B'}</strong>
-          ${pendingSyncs.length ? `<br><span style="color:#f6d57a">${pendingSyncs.length} lectura(s) offline pendientes de sincronizar con tu PC.</span>` : ''}
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Estadísticas en este móvil</div>
+        <div class="stats-grid">
+          <div class="stat-tile"><strong>${state.library.length}</strong><span>En biblioteca</span></div>
+          <div class="stat-tile"><strong>${stats.chaptersCompleted}</strong><span>Cap. leídos</span></div>
+          <div class="stat-tile"><strong>${minsRead}m</strong><span>Tiempo leído</span></div>
         </div>
-        ${mangaGroups.length ? mangaGroups.map((g) => `
+      </div>
+
+      <div class="settings-card">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Descargas sin conexión (tipo Spotify)</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:6px">
+          ${allDl.length} capítulo(s) guardados · <strong>${Offline ? Offline.formatBytes(totalBytes) : '0 B'}</strong>
+          ${pendingSyncs.length ? `<br><span style="color:#f6d57a">${pendingSyncs.length} lectura(s) offline pendientes de sincronizar.</span>` : ''}
+        </div>
+        ${quotaHtml}
+        <div class="setting-group" style="margin-top:10px">
+          <span class="setting-label">Auto-descargar siguientes al leer</span>
+          <div class="seg-control" style="grid-template-columns:repeat(4,1fr)">
+            ${[0, 1, 3, 5].map((n) => `<button class="seg-btn ${p.autoDlNext === n ? 'active' : ''}" data-pref-autodl="${n}">${n === 0 ? 'No' : '+' + n}</button>`).join('')}
+          </div>
+        </div>
+        <div class="setting-group">
+          <span class="setting-label">Borrar descarga del móvil al terminar capítulo</span>
+          <div class="seg-control two">
+            <button class="seg-btn ${!p.autoDelRead ? 'active' : ''}" data-pref-autodel="0">Conservar</button>
+            <button class="seg-btn ${p.autoDelRead ? 'active' : ''}" data-pref-autodel="1">Borrar al leer</button>
+          </div>
+        </div>
+        ${mangaGroups.map((g) => `
           <div class="dl-storage-row">
             <div style="min-width:0;flex:1">
               <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(g.title)}</div>
@@ -1095,20 +1567,20 @@
             </div>
             <button class="secondary-btn" data-del-manga-dl="${g.mangaId}" type="button" style="padding:6px 10px;font-size:12px">Borrar</button>
           </div>
-        `).join('') : '<p style="margin:0 0 6px;font-size:12.5px;color:var(--muted)">Abre un manga y pulsa el icono ↓ junto a cada capítulo (o "↓ Sig. 5") para descargarlo en tu móvil y leerlo aunque el PC esté apagado.</p>'}
+        `).join('')}
         ${allDl.length ? '<button id="delAllDlBtn" class="secondary-btn" type="button" style="width:100%;margin-top:10px;color:#ff8690;border-color:rgba(255,77,90,0.35)">Borrar todas las descargas</button>' : ''}
       </div>
 
       <div class="settings-card">
+        <div style="font-size:14px;font-weight:700;margin-bottom:8px">Lector por defecto</div>
         <div class="setting-group">
-          <span class="setting-label">Modo de lectura por defecto</span>
+          <span class="setting-label">Modo de lectura</span>
           <div class="seg-control">
             <button class="seg-btn ${p.mode === 'vertical' ? 'active' : ''}" data-pref-mode="vertical">Continuo (PDF)</button>
             <button class="seg-btn ${p.mode === 'rtl' ? 'active' : ''}" data-pref-mode="rtl">Manga D→I</button>
             <button class="seg-btn ${p.mode === 'ltr' ? 'active' : ''}" data-pref-mode="ltr">Paginado I→D</button>
           </div>
         </div>
-
         <div class="setting-group">
           <span class="setting-label">Ajuste de imagen</span>
           <div class="seg-control two">
@@ -1116,31 +1588,70 @@
             <button class="seg-btn ${p.fit === 'screen' ? 'active' : ''}" data-pref-fit="screen">Ajustar pantalla</button>
           </div>
         </div>
-
         <div class="setting-group">
-          <span class="setting-label">Espacio entre páginas</span>
+          <span class="setting-label">Espacio entre páginas (vertical)</span>
           <div class="seg-control two">
             <button class="seg-btn ${!p.gap ? 'active' : ''}" data-pref-gap="0">Sin espacio (PDF)</button>
             <button class="seg-btn ${p.gap ? 'active' : ''}" data-pref-gap="1">Con separación</button>
           </div>
         </div>
-
+        <div class="setting-group">
+          <span class="setting-label">Paso automático al siguiente capítulo</span>
+          <div class="seg-control two">
+            <button class="seg-btn ${p.autoNext ? 'active' : ''}" data-pref-autonext="1">Activado</button>
+            <button class="seg-btn ${!p.autoNext ? 'active' : ''}" data-pref-autonext="0">Manual</button>
+          </div>
+        </div>
+        <div class="setting-group">
+          <span class="setting-label">Mantener pantalla encendida al leer (Wake Lock)</span>
+          <div class="seg-control two">
+            <button class="seg-btn ${p.wakeLock ? 'active' : ''}" data-pref-wake="1">Sí</button>
+            <button class="seg-btn ${!p.wakeLock ? 'active' : ''}" data-pref-wake="0">No</button>
+          </div>
+        </div>
+        <div class="setting-group">
+          <span class="setting-label">Recortar márgenes blancos automáticamente</span>
+          <div class="seg-control two">
+            <button class="seg-btn ${!p.cropMargins ? 'active' : ''}" data-pref-crop="0">No</button>
+            <button class="seg-btn ${p.cropMargins ? 'active' : ''}" data-pref-crop="1">Sí</button>
+          </div>
+        </div>
+        <div class="setting-group">
+          <span class="setting-label">Doble página en horizontal / tablet (paginado)</span>
+          <div class="seg-control two">
+            <button class="seg-btn ${p.doublePage ? 'active' : ''}" data-pref-dbl="1">Sí</button>
+            <button class="seg-btn ${!p.doublePage ? 'active' : ''}" data-pref-dbl="0">No</button>
+          </div>
+        </div>
         <div class="setting-group" style="margin-bottom:0">
-          <span class="setting-label">Filtro nocturno (oscurecer lector): <strong id="setDimVal">${p.dim}%</strong></span>
+          <span class="setting-label">Filtro nocturno: <strong id="setDimVal">${p.dim}%</strong></span>
           <input id="setDimSlider" type="range" min="0" max="70" step="5" value="${p.dim}" style="width:100%;accent-color:var(--accent)">
         </div>
       </div>
 
+      ${bookmarks.length ? `
       <div class="settings-card">
-        <div style="font-size:14px;font-weight:700;margin-bottom:6px">App en tu móvil</div>
-        ${isStandaloneApp()
-          ? '<p style="margin:0 0 12px;font-size:13px;color:var(--green);line-height:1.45"><strong>✓ Ya estás usando la app instalada.</strong> Se abre directo en tu móvil sin volver a escanear el QR.</p>'
-          : `<p style="margin:0 0 12px;font-size:13px;color:var(--muted);line-height:1.45">
-               Instálala una sola vez para tener el icono en tu móvil, leer a pantalla completa y no volver a escanear el QR.
-             </p>
-             <button id="settingsInstallBtn" class="primary-btn" type="button" style="margin-bottom:10px">
-               ${deferredInstallPrompt ? 'Instalar app ahora' : 'Cómo instalar en pantalla de inicio'}
-             </button>`}
+        <div style="font-size:14px;font-weight:700;margin-bottom:6px">Páginas marcadas (${bookmarks.length})</div>
+        ${bookmarks.slice(0, 15).map((bm) => `
+          <div class="dl-storage-row">
+            <div style="min-width:0;flex:1;cursor:pointer" data-open-bm="${bm.mangaId}:${bm.chapterId}:${bm.pageIdx}">
+              <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(bm.mangaTitle)}</div>
+              <div style="font-size:11.5px;color:var(--muted)">${esc(bm.chapterName)} · Pág. ${bm.pageIdx + 1}</div>
+            </div>
+            <button class="list-del-btn" data-del-bm="${bm.chapterId}:${bm.pageIdx}" type="button">×</button>
+          </div>
+        `).join('')}
+      </div>` : ''}
+
+      <div class="settings-card">
+        <div style="font-size:14px;font-weight:700;margin-bottom:8px">Privacidad, copias y app</div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button id="pinToggleBtn" class="secondary-btn" type="button" style="flex:1">
+            ${Extras && Extras.hasPin() ? 'Quitar bloqueo PIN' : 'Activar bloqueo PIN (4 dígitos)'}
+          </button>
+          ${!state.offline ? '<button id="exportBackupBtn" class="secondary-btn" type="button">Backup .tachibk</button>' : ''}
+        </div>
+        ${!isStandaloneApp() ? `<button id="settingsInstallBtn" class="primary-btn" type="button" style="margin-bottom:10px">${deferredInstallPrompt ? 'Instalar app ahora' : 'Cómo instalar en pantalla de inicio'}</button>` : ''}
         <a href="/" class="secondary-btn" style="display:block;text-align:center;text-decoration:none;margin-bottom:10px">
           Abrir Suwayomi completo (instalar extensiones)
         </a>
@@ -1149,6 +1660,40 @@
         </button>
       </div>
     `;
+
+    // Bindings de ajustes
+    mainContent.querySelectorAll('[data-pref-autodl]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.autoDlNext = Number(b.dataset.prefAutodl); savePrefs(); renderSettings(); });
+    });
+    mainContent.querySelectorAll('[data-pref-autodel]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.autoDelRead = b.dataset.prefAutodel === '1'; savePrefs(); renderSettings(); });
+    });
+    mainContent.querySelectorAll('[data-pref-mode]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.mode = b.dataset.prefMode; savePrefs(); renderSettings(); });
+    });
+    mainContent.querySelectorAll('[data-pref-fit]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.fit = b.dataset.prefFit; savePrefs(); renderSettings(); });
+    });
+    mainContent.querySelectorAll('[data-pref-gap]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.gap = b.dataset.prefGap === '1'; savePrefs(); renderSettings(); });
+    });
+    mainContent.querySelectorAll('[data-pref-autonext]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.autoNext = b.dataset.prefAutonext === '1'; savePrefs(); renderSettings(); });
+    });
+    mainContent.querySelectorAll('[data-pref-wake]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.wakeLock = b.dataset.prefWake === '1'; savePrefs(); renderSettings(); });
+    });
+    mainContent.querySelectorAll('[data-pref-crop]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.cropMargins = b.dataset.prefCrop === '1'; savePrefs(); renderSettings(); });
+    });
+    mainContent.querySelectorAll('[data-pref-dbl]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.doublePage = b.dataset.prefDbl === '1'; savePrefs(); renderSettings(); });
+    });
+    $('setDimSlider').addEventListener('input', (e) => {
+      state.prefs.dim = parseInt(e.target.value, 10) || 0;
+      $('setDimVal').textContent = state.prefs.dim + '%';
+      savePrefs();
+    });
 
     mainContent.querySelectorAll('[data-del-manga-dl]').forEach((b) => {
       b.addEventListener('click', async () => {
@@ -1170,27 +1715,187 @@
       });
     }
 
-    mainContent.querySelectorAll('[data-pref-mode]').forEach((b) => {
-      b.addEventListener('click', () => { state.prefs.mode = b.dataset.prefMode; savePrefs(); renderSettings(); });
+    mainContent.querySelectorAll('[data-open-bm]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const [mId, cId, pIdx] = el.dataset.openBm.split(':').map(Number);
+        navigateHash(`#read/${mId}/${cId}/${pIdx}`);
+      });
     });
-    mainContent.querySelectorAll('[data-pref-fit]').forEach((b) => {
-      b.addEventListener('click', () => { state.prefs.fit = b.dataset.prefFit; savePrefs(); renderSettings(); });
+    mainContent.querySelectorAll('[data-del-bm]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const [cId, pIdx] = el.dataset.delBm.split(':').map(Number);
+        Extras.removePageBookmark(cId, pIdx);
+        renderSettings();
+      });
     });
-    mainContent.querySelectorAll('[data-pref-gap]').forEach((b) => {
-      b.addEventListener('click', () => { state.prefs.gap = b.dataset.prefGap === '1'; savePrefs(); renderSettings(); });
+
+    $('pinToggleBtn').addEventListener('click', () => {
+      if (Extras.hasPin()) {
+        showPinPrompt('PIN actual para desactivar', async (code) => {
+          if (await Extras.verifyPin(code)) {
+            Extras.clearPin();
+            hidePinPrompt();
+            showToast('Bloqueo PIN desactivado');
+            renderSettings();
+          } else {
+            pinBuffer = '';
+            pinErr.textContent = 'PIN incorrecto';
+            renderPinDots();
+          }
+        });
+      } else {
+        showPinPrompt('Elige un PIN de 4 dígitos', async (first) => {
+          showPinPrompt('Repite el PIN para confirmar', async (second) => {
+            if (first === second) {
+              await Extras.setPin(first);
+              hidePinPrompt();
+              showToast('Bloqueo PIN activado');
+              renderSettings();
+            } else {
+              pinBuffer = '';
+              pinErr.textContent = 'No coinciden, inténtalo de nuevo';
+              renderPinDots();
+            }
+          });
+        });
+      }
     });
-    $('setDimSlider').addEventListener('input', (e) => {
-      state.prefs.dim = parseInt(e.target.value, 10) || 0;
-      $('setDimVal').textContent = state.prefs.dim + '%';
-      savePrefs();
-    });
+
+    const expBk = $('exportBackupBtn');
+    if (expBk) {
+      expBk.addEventListener('click', async () => {
+        try {
+          showToast('Generando copia .tachibk...');
+          const d = await gql(M_CREATE_BACKUP, {}, 25000);
+          const url = d.createBackup && d.createBackup.url;
+          if (!url) throw new Error('Sin URL de backup');
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'suwayomi-backup.tachibk';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        } catch (err) {
+          showToast('No se pudo crear la copia: ' + (err.message || ''));
+        }
+      });
+    }
+
     const instBtn = $('settingsInstallBtn');
     if (instBtn) instBtn.addEventListener('click', triggerInstallApp);
     const clrHistBtn = $('settingsClearHistBtn');
     if (clrHistBtn) clrHistBtn.addEventListener('click', () => runClearHistory(0, ''));
   }
 
-  // ---------------- Detalle de Manga ----------------
+  // ---------------- DETALLE DE MANGA (Categorías, Migración, Marcadores, Descargas) ----------------
+  async function openMangaCategoriesSheet(manga) {
+    if (!state.categories.length) {
+      try {
+        const d = await gql(Q_LIBRARY, {}, 6000);
+        state.categories = (d.categories && d.categories.nodes) || [];
+      } catch { }
+    }
+    const custom = state.categories.filter((c) => c.id !== 0);
+    if (!custom.length) {
+      showToast('Crea primero una categoría desde Biblioteca → Categorías');
+      return;
+    }
+    const currentIds = new Set(((manga.categories && manga.categories.nodes) || []).map((c) => c.id));
+    openAppSheet(`
+      <div class="sheet-title">
+        <span>Categorías del manga</span>
+        <button id="mcClose" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      <div id="mcList">
+        ${custom.map((c) => `
+          <label class="dl-storage-row" style="cursor:pointer">
+            <span>${esc(c.name)}</span>
+            <input type="checkbox" value="${c.id}" ${currentIds.has(c.id) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--accent)">
+          </label>
+        `).join('')}
+      </div>
+      <button id="mcSave" class="primary-btn" type="button" style="margin-top:12px">Guardar categorías</button>
+    `);
+    $('mcClose').addEventListener('click', closeAppSheet);
+    $('mcSave').addEventListener('click', async () => {
+      const checked = Array.from(appSheet.querySelectorAll('input[type="checkbox"]:checked')).map((i) => Number(i.value));
+      try {
+        const r = await gql(M_UPDATE_MANGA_CATS, { id: manga.id, catIds: checked });
+        if (r.updateMangaCategories && r.updateMangaCategories.manga) {
+          manga.categories = r.updateMangaCategories.manga.categories;
+        }
+        state.library = [];
+        closeAppSheet();
+        showToast('Categorías guardadas');
+      } catch {
+        showToast('No se pudieron guardar las categorías');
+      }
+    });
+  }
+
+  async function openMigrateSheet(manga) {
+    openAppSheet(`
+      <div class="sheet-title">
+        <span>Migrar fuente</span>
+        <button id="migClose" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      <div class="spinner"></div>
+      <p style="text-align:center;color:var(--muted);font-size:13px">Buscando "${esc(manga.title)}" en otras fuentes...</p>
+    `);
+    $('migClose').addEventListener('click', closeAppSheet);
+
+    try {
+      if (!state.sources.length) {
+        const d = await gql(Q_SOURCES, {}, 7000);
+        state.sources = (d.sources && d.sources.nodes) || [];
+      }
+      const others = state.sources.filter((s) => String(s.id) !== String(manga.sourceId));
+      const res = await Promise.all(others.map(async (src) => {
+        try {
+          const r = await gql(M_SOURCE_MANGAS, {
+            input: { source: String(src.id), type: 'SEARCH', page: 1, query: manga.title }
+          }, 10000);
+          return { source: src, mangas: ((r.fetchSourceManga && r.fetchSourceManga.mangas) || []).slice(0, 4) };
+        } catch {
+          return { source: src, mangas: [] };
+        }
+      }));
+      const hits = res.filter((x) => x.mangas.length > 0);
+
+      openAppSheet(`
+        <div class="sheet-title">
+          <span>Migrar "${esc(manga.title)}"</span>
+          <button id="migClose2" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+        </div>
+        ${hits.length ? hits.map((h) => `
+          <div style="margin-bottom:12px">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">${esc(h.source.name)}</div>
+            ${h.mangas.map((cand) => `
+              <div class="list-card" data-mig-id="${cand.id}" style="margin-bottom:6px">
+                <img class="list-thumb" src="${esc(cand.thumbnailUrl || '')}" alt="" style="width:40px;height:56px">
+                <div class="list-body">
+                  <div class="list-title">${esc(cand.title)}</div>
+                  <div class="list-sub">${cand.inLibrary ? 'Ya en biblioteca' : 'Abrir en esta fuente'}</div>
+                </div>
+                <span style="color:var(--accent);font-weight:700;font-size:12px">Abrir ›</span>
+              </div>
+            `).join('')}
+          </div>
+        `).join('') : '<p style="color:var(--muted);font-size:13px">No se encontraron alternativas en tus otras fuentes instaladas.</p>'}
+      `);
+      $('migClose2').addEventListener('click', closeAppSheet);
+      appSheet.querySelectorAll('[data-mig-id]').forEach((row) => {
+        row.addEventListener('click', () => {
+          closeAppSheet();
+          navigateHash('#manga/' + row.dataset.migId);
+        });
+      });
+    } catch {
+      closeAppSheet();
+      showToast('Error buscando alternativas');
+    }
+  }
+
   async function openMangaDetail(mangaId, forceFetch = false) {
     mangaView.classList.remove('hidden');
     mangaView.innerHTML = '<div style="padding-top:80px"><div class="spinner"></div></div>';
@@ -1256,23 +1961,20 @@
   }
 
   function chapterDlButtonHtml(c) {
-    const dl = isDownloaded(c.id);
-    if (dl) {
-      return `<button class="chap-dl-btn done" data-dl-id="${c.id}" type="button" title="Descargado (toca para borrar)">✓</button>`;
+    if (isDownloaded(c.id)) {
+      return `<button class="chap-dl-btn done" data-dl-id="${c.id}" type="button" title="Descargado">✓</button>`;
     }
     if (state.activeDownload && state.activeDownload.chapterId === c.id) {
-      const txt = state.activeDownload.total > 0
-        ? `${state.activeDownload.done}/${state.activeDownload.total}`
-        : '...';
+      const txt = state.activeDownload.total > 0 ? `${state.activeDownload.done}/${state.activeDownload.total}` : '...';
       return `<button class="chap-dl-btn busy" data-dl-id="${c.id}" type="button" disabled>${txt}</button>`;
     }
     if (state.downloadQueue.some((q) => q.chapter.id === c.id)) {
       return `<button class="chap-dl-btn busy" data-dl-id="${c.id}" type="button" disabled>Cola</button>`;
     }
     if (state.offline) {
-      return `<button class="chap-dl-btn" data-dl-id="${c.id}" type="button" disabled title="No descargado">—</button>`;
+      return `<button class="chap-dl-btn" data-dl-id="${c.id}" type="button" disabled>—</button>`;
     }
-    return `<button class="chap-dl-btn" data-dl-id="${c.id}" type="button" title="Descargar para leer sin conexión">↓</button>`;
+    return `<button class="chap-dl-btn" data-dl-id="${c.id}" type="button" title="Descargar">↓</button>`;
   }
 
   function drawMangaDetail() {
@@ -1283,6 +1985,7 @@
       .filter((c) => {
         if (state.chapterFilter === 'unread') return !c.isRead;
         if (state.chapterFilter === 'downloaded') return isDownloaded(c.id);
+        if (state.chapterFilter === 'bookmarked') return !!c.isBookmarked;
         return true;
       })
       .slice()
@@ -1292,7 +1995,6 @@
     if (m.author) metaParts.push(m.author);
     if (m.source && m.source.name) metaParts.push(m.source.name);
     if (m.status) metaParts.push(m.status);
-
     const cover = coverUrlFor(m);
 
     mangaView.innerHTML = `
@@ -1304,8 +2006,9 @@
             <button id="detailBackBtn" class="icon-btn" type="button" aria-label="Volver">
               <svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg>
             </button>
-            <div style="display:flex;gap:8px">
-              ${!state.offline ? `<button id="detailBatchDlBtn" class="secondary-btn" type="button" style="padding:6px 11px;font-size:12px">↓ Sig. 5</button>` : ''}
+            <div style="display:flex;gap:6px">
+              ${!state.offline ? '<button id="detailBatchDlBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">↓ Sig. 5</button>' : ''}
+              ${!state.offline ? '<button id="detailMigBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">Migrar</button>' : ''}
               ${!state.offline ? `<button id="detailRefreshBtn" class="icon-btn" type="button" aria-label="Actualizar capítulos">
                 <svg viewBox="0 0 24 24"><path d="M17.6 6.4A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4l-2.4 2.4z"/></svg>
               </button>` : ''}
@@ -1316,7 +2019,7 @@
             <div class="manga-hero-meta">
               <h2 class="manga-hero-title">${esc(m.title)}</h2>
               <div class="manga-hero-sub">${esc(metaParts.join(' · '))}</div>
-              ${dlCount > 0 ? `<div style="margin-top:5px;font-size:11.5px;color:var(--green);font-weight:600">↓ ${dlCount} capítulo(s) descargados en este móvil</div>` : ''}
+              ${dlCount > 0 ? `<div style="margin-top:5px;font-size:11.5px;color:var(--green);font-weight:600">↓ ${dlCount} descargado(s)</div>` : ''}
             </div>
           </div>
         </div>
@@ -1326,9 +2029,8 @@
         ${resume
           ? `<button id="detailResumeBtn" class="primary-btn" style="flex:1">${esc(resume.label)}</button>`
           : (state.offline ? '<button class="secondary-btn" style="flex:1;opacity:0.6" disabled>Sin capítulos descargados</button>' : '')}
-        ${!state.offline ? `<button id="detailLibBtn" class="secondary-btn" type="button" style="${m.inLibrary ? 'border-color:var(--green);color:var(--green)' : ''}">
-          ${m.inLibrary ? '✓ En biblioteca' : '+ Biblioteca'}
-        </button>` : ''}
+        ${!state.offline ? `<button id="detailLibBtn" class="secondary-btn" type="button" style="${m.inLibrary ? 'border-color:var(--green);color:var(--green)' : ''}">${m.inLibrary ? '✓ Biblio' : '+ Biblio'}</button>` : ''}
+        ${!state.offline && m.inLibrary ? '<button id="detailCatBtn" class="secondary-btn" type="button">Cat.</button>' : ''}
       </div>
 
       ${m.description ? `<div id="detailDesc" class="manga-desc clamped">${esc(m.description)}</div>` : ''}
@@ -1337,8 +2039,9 @@
         <strong>${filtered.length} cap.</strong>
         <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end">
           <button id="chapFilterDl" class="chip ${state.chapterFilter === 'downloaded' ? 'active' : ''}" type="button">↓ (${dlCount})</button>
+          <button id="chapFilterStar" class="chip ${state.chapterFilter === 'bookmarked' ? 'active' : ''}" type="button">★</button>
           <button id="chapFilterBtn" class="chip ${state.chapterFilter === 'unread' ? 'active' : ''}" type="button">Sin leer</button>
-          <button id="chapSortBtn" class="chip" type="button">${state.chapterDesc ? '↓ Nuevos' : '↑ Antiguos'}</button>
+          <button id="chapSortBtn" class="chip" type="button">${state.chapterDesc ? '↓' : '↑'}</button>
         </div>
       </div>
 
@@ -1360,6 +2063,7 @@
                   ].filter(Boolean).join(' · ')}
                 </div>
               </div>
+              ${!state.offline ? `<button class="chap-star-btn ${c.isBookmarked ? 'active' : ''}" data-star-id="${c.id}" type="button" title="Marcar capítulo">${c.isBookmarked ? '★' : '☆'}</button>` : ''}
               ${chapterDlButtonHtml(c)}
             </div>
           `;
@@ -1374,34 +2078,28 @@
       else navigateHash('#' + state.tab);
     });
     const refBtn = $('detailRefreshBtn');
-    if (refBtn) {
-      refBtn.addEventListener('click', () => {
-        showToast('Actualizando capítulos...');
-        openMangaDetail(m.id, true);
-      });
-    }
+    if (refBtn) refBtn.addEventListener('click', () => { showToast('Actualizando capítulos...'); openMangaDetail(m.id, true); });
+    const migBtn = $('detailMigBtn');
+    if (migBtn) migBtn.addEventListener('click', () => openMigrateSheet(m));
+    const catBtn = $('detailCatBtn');
+    if (catBtn) catBtn.addEventListener('click', () => openMangaCategoriesSheet(m));
+
     const batchBtn = $('detailBatchDlBtn');
     if (batchBtn) {
       batchBtn.addEventListener('click', () => {
         const asc = state.mangaChapters.slice().sort((a, b) => a.sourceOrder - b.sourceOrder);
         const candidates = asc.filter((c) => !c.isRead && !isDownloaded(c.id)).slice(0, 5);
         const toQueue = candidates.length ? candidates : asc.filter((c) => !isDownloaded(c.id)).slice(0, 5);
-        if (!toQueue.length) {
-          showToast('Todos los capítulos ya están descargados');
-          return;
-        }
-        toQueue.forEach((c) => enqueueChapterDownload(m, state.mangaChapters, c));
+        if (!toQueue.length) { showToast('Todos los capítulos ya están descargados'); return; }
+        toQueue.forEach((c) => enqueueChapterDownload(m, state.mangaChapters, c, true));
         showToast(`Añadidos ${toQueue.length} capítulo(s) a descargas`);
       });
     }
 
     const desc = $('detailDesc');
     if (desc) desc.addEventListener('click', () => desc.classList.toggle('clamped'));
-
     const resumeBtn = $('detailResumeBtn');
-    if (resumeBtn && resume) {
-      resumeBtn.addEventListener('click', () => navigateHash(`#read/${m.id}/${resume.chap.id}`));
-    }
+    if (resumeBtn && resume) resumeBtn.addEventListener('click', () => navigateHash(`#read/${m.id}/${resume.chap.id}`));
 
     const libBtn = $('detailLibBtn');
     if (libBtn) {
@@ -1413,23 +2111,28 @@
           state.library = [];
           showToast(nextVal ? 'Añadido a tu biblioteca' : 'Quitado de tu biblioteca');
           drawMangaDetail();
-        } catch {
-          showToast('No se pudo actualizar la biblioteca');
-        }
+        } catch { showToast('No se pudo actualizar la biblioteca'); }
       });
     }
 
-    $('chapFilterDl').addEventListener('click', () => {
-      state.chapterFilter = state.chapterFilter === 'downloaded' ? 'all' : 'downloaded';
-      drawMangaDetail();
-    });
-    $('chapFilterBtn').addEventListener('click', () => {
-      state.chapterFilter = state.chapterFilter === 'unread' ? 'all' : 'unread';
-      drawMangaDetail();
-    });
-    $('chapSortBtn').addEventListener('click', () => {
-      state.chapterDesc = !state.chapterDesc;
-      drawMangaDetail();
+    $('chapFilterDl').addEventListener('click', () => { state.chapterFilter = state.chapterFilter === 'downloaded' ? 'all' : 'downloaded'; drawMangaDetail(); });
+    $('chapFilterStar').addEventListener('click', () => { state.chapterFilter = state.chapterFilter === 'bookmarked' ? 'all' : 'bookmarked'; drawMangaDetail(); });
+    $('chapFilterBtn').addEventListener('click', () => { state.chapterFilter = state.chapterFilter === 'unread' ? 'all' : 'unread'; drawMangaDetail(); });
+    $('chapSortBtn').addEventListener('click', () => { state.chapterDesc = !state.chapterDesc; drawMangaDetail(); });
+
+    mangaView.querySelectorAll('.chap-star-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const cId = Number(btn.dataset.starId);
+        const chap = state.mangaChapters.find((x) => x.id === cId);
+        if (!chap) return;
+        const nextVal = !chap.isBookmarked;
+        try {
+          await gql(M_UPDATE_CHAPTER, { id: cId, patch: { isBookmarked: nextVal } });
+          chap.isBookmarked = nextVal;
+          drawMangaDetail();
+        } catch { showToast('No se pudo marcar el capítulo'); }
+      });
     });
 
     mangaView.querySelectorAll('.chap-dl-btn').forEach((btn) => {
@@ -1463,18 +2166,31 @@
     });
   }
 
-  // ---------------- Lector estilo Manga Dogs (Online y Sin Conexión) ----------------
+  // ---------------- LECTOR AVANZADO (Auto-siguiente, por manga, Wake Lock, Zoom, Recorte, Brillo, 2 págs) ----------------
   function revokeReaderBlobs() {
     if (state.reader.blobUrls && state.reader.blobUrls.length) {
       state.reader.blobUrls.forEach((u) => URL.revokeObjectURL(u));
       state.reader.blobUrls = [];
     }
+    readerStage.querySelectorAll('img[data-cropped-url]').forEach((img) => {
+      try { URL.revokeObjectURL(img.dataset.croppedUrl); } catch { }
+    });
   }
 
-  async function openReader(mangaId, chapterId) {
+  function clearReaderTimers() {
     const r = state.reader;
+    if (r.observer) { r.observer.disconnect(); r.observer = null; }
+    if (r.endObserver) { r.endObserver.disconnect(); r.endObserver = null; }
+    if (r.autoNextTimer) { clearTimeout(r.autoNextTimer); r.autoNextTimer = null; }
+    if (r.readTickTimer) { clearInterval(r.readTickTimer); r.readTickTimer = null; }
+  }
+
+  async function openReader(mangaId, chapterId, forcedPage = null) {
+    const r = state.reader;
+    clearReaderTimers();
     revokeReaderBlobs();
     r.open = true;
+    r.zoomed = false;
     r.lastSavedPage = -1;
     r.markedRead = false;
     r.preloadedChapId = null;
@@ -1482,12 +2198,18 @@
     await refreshDownloadsIndex();
 
     readerView.classList.remove('hidden');
-    applyReaderVisualPrefs();
+    if (state.prefs.wakeLock && Extras) Extras.requestWakeLock();
+
+    r.readTickTimer = setInterval(() => {
+      if (r.open && document.visibilityState === 'visible' && Extras) {
+        Extras.recordStat({ secondsRead: 10 });
+      }
+    }, 10000);
+
     setReaderChrome(true);
     readerStage.innerHTML = '<div style="padding-top:40vh"><div class="spinner"></div></div>';
 
     try {
-      // Asegurar manga + lista de capítulos (desde red o caché offline)
       if (!state.manga || state.manga.id !== mangaId || !state.mangaChapters.length) {
         try {
           const d = await gql(Q_MANGA_DETAIL, { id: mangaId }, 7000);
@@ -1509,20 +2231,17 @@
       r.chapIdx = Math.max(0, r.chapters.findIndex((c) => c.id === chapterId));
       const chap = r.chapters[r.chapIdx];
 
+      applyReaderVisualPrefs();
       readerMangaTitle.textContent = r.manga ? r.manga.title : 'Manga';
       readerChapterTitle.textContent = chap ? chap.name : '';
       readerPrevChap.disabled = r.chapIdx <= 0;
       readerNextChap.disabled = r.chapIdx >= r.chapters.length - 1;
 
-      // 1) Intentar primero desde descargas locales (instantáneo y 100% offline)
       let pages = Offline ? await Offline.loadDownloadedPageBlobUrls(chapterId) : null;
       if (pages && pages.length) {
         r.blobUrls = pages;
       } else {
-        // 2) No está descargado -> requiere conexión con el PC
-        if (state.offline) {
-          throw new Error('OFFLINE_NOT_DOWNLOADED');
-        }
+        if (state.offline) throw new Error('OFFLINE_NOT_DOWNLOADED');
         try {
           const pgData = await gql(M_FETCH_PAGES, { chapterId }, 25000);
           pages = (pgData.fetchChapterPages && pgData.fetchChapterPages.pages) || [];
@@ -1533,22 +2252,25 @@
       }
 
       r.pages = pages || [];
-
       if (!r.pages.length) {
-        readerStage.innerHTML = `
-          <div class="empty-state" style="padding-top:34vh">
-            <h3>No se pudieron cargar las páginas</h3>
-            <p>La fuente puede estar saturada o tardando en responder.</p>
-            <button id="retryPagesBtn" class="primary-btn" style="max-width:220px">Reintentar</button>
-          </div>
-        `;
-        $('retryPagesBtn').addEventListener('click', () => openReader(mangaId, chapterId));
+        readerStage.innerHTML = `<div class="empty-state" style="padding-top:34vh"><h3>No se pudieron cargar las páginas</h3><button id="retryPagesBtn" class="primary-btn" style="max-width:220px">Reintentar</button></div>`;
+        $('retryPagesBtn').addEventListener('click', () => openReader(mangaId, chapterId, forcedPage));
         return;
       }
 
-      const startPage = (chap && !chap.isRead && chap.lastPageRead > 0 && chap.lastPageRead < r.pages.length)
-        ? chap.lastPageRead
-        : 0;
+      // Auto-descargar siguientes N capítulos en segundo plano si está activado y online
+      if (!state.offline && state.prefs.autoDlNext > 0 && r.manga) {
+        for (let k = 1; k <= state.prefs.autoDlNext; k++) {
+          const nextC = r.chapters[r.chapIdx + k];
+          if (nextC && !nextC.isRead && !isDownloaded(nextC.id)) {
+            enqueueChapterDownload(r.manga, r.chapters, nextC, true);
+          }
+        }
+      }
+
+      const startPage = (typeof forcedPage === 'number' && !isNaN(forcedPage) && forcedPage >= 0 && forcedPage < r.pages.length)
+        ? forcedPage
+        : ((chap && !chap.isRead && chap.lastPageRead > 0 && chap.lastPageRead < r.pages.length) ? chap.lastPageRead : 0);
       r.pageIdx = startPage;
       r.markedRead = !!(chap && chap.isRead);
 
@@ -1564,9 +2286,7 @@
       readerStage.innerHTML = `
         <div class="empty-state" style="padding-top:34vh">
           <h3>${notDl ? 'Capítulo no descargado' : 'Error al cargar el capítulo'}</h3>
-          <p>${notDl
-            ? 'El servidor está apagado o sin conexión. Solo puedes leer los capítulos que hayas descargado previamente en tu móvil.'
-            : esc(err.message || '')}</p>
+          <p>${notDl ? 'El servidor está apagado o sin conexión. Solo puedes leer capítulos descargados.' : esc(err.message || '')}</p>
           <button id="readerErrBack" class="primary-btn" style="max-width:220px">Volver</button>
         </div>
       `;
@@ -1580,26 +2300,32 @@
   function closeReaderUi() {
     const r = state.reader;
     r.open = false;
-    if (r.observer) { r.observer.disconnect(); r.observer = null; }
+    clearReaderTimers();
     revokeReaderBlobs();
+    if (Extras) Extras.releaseWakeLock();
     closeReaderSheet();
     readerView.classList.add('hidden');
     readerStage.innerHTML = '';
-    if (state.manga && !mangaView.classList.contains('hidden')) {
-      drawMangaDetail();
-    }
+    if (state.manga && !mangaView.classList.contains('hidden')) drawMangaDetail();
   }
 
   function applyReaderVisualPrefs() {
     const p = state.prefs;
     readerDimmer.style.opacity = String((p.dim || 0) / 100);
-    readerModeQuick.textContent = modeLabel(p.mode);
+    readerModeQuick.textContent = modeLabel(effectiveReaderMode());
     readerMiniStatus.classList.toggle('hidden', !p.miniStatus);
   }
 
   function setReaderChrome(visible) {
     state.reader.chromeVisible = visible;
     readerView.classList.toggle('chrome-hidden', !visible);
+  }
+
+  function updateBookmarkBtnUi() {
+    const r = state.reader;
+    const chap = r.chapters[r.chapIdx];
+    const marked = chap && Extras && Extras.isPageBookmarked(chap.id, r.pageIdx);
+    readerBookmarkBtn.classList.toggle('bookmarked', !!marked);
   }
 
   function updatePageUi(idx) {
@@ -1611,10 +2337,11 @@
     const chap = r.chapters[r.chapIdx];
     const chapShort = chap && chap.chapterNumber >= 0 ? `Cap. ${chap.chapterNumber}` : '';
     readerMiniStatus.textContent = `${chapShort ? chapShort + ' · ' : ''}${r.pageIdx + 1}/${r.pages.length}`;
+    updateBookmarkBtnUi();
 
     syncProgressToServer(r.pageIdx);
 
-    if (state.prefs.mode === 'vertical') {
+    if (effectiveReaderMode() === 'vertical') {
       for (let k = 1; k <= 6; k++) {
         const nextImg = readerStage.querySelector(`.reader-page-slot[data-page="${r.pageIdx + k}"] img`);
         if (nextImg && nextImg.loading === 'lazy') nextImg.loading = 'eager';
@@ -1648,12 +2375,15 @@
       if (reachedEnd && !r.markedRead) {
         patch.isRead = true;
         r.markedRead = true;
+        if (Extras) Extras.recordStat({ chaptersCompleted: 1 });
+        // Borrado automático tras terminar si está activado
+        if (state.prefs.autoDelRead && isDownloaded(chap.id) && Offline) {
+          Offline.deleteDownload(chap.id).then(() => refreshDownloadsIndex()).catch(() => { });
+        }
       }
       r.lastSavedPage = pageIdx;
 
-      if (Offline && r.manga) {
-        Offline.updateLocalChapterProgress(r.manga.id, chap.id, patch);
-      }
+      if (Offline && r.manga) Offline.updateLocalChapterProgress(r.manga.id, chap.id, patch);
 
       if (state.offline) {
         if (Offline) Offline.queueProgress(chap.id, patch);
@@ -1667,23 +2397,22 @@
 
   function renderReaderPages() {
     const r = state.reader;
-    const p = state.prefs;
     if (r.observer) { r.observer.disconnect(); r.observer = null; }
+    if (r.endObserver) { r.endObserver.disconnect(); r.endObserver = null; }
+    if (r.autoNextTimer) { clearTimeout(r.autoNextTimer); r.autoNextTimer = null; }
 
-    readerStage.className = 'reader-stage' + (p.mode === 'vertical' ? '' : ' paged');
+    const mode = effectiveReaderMode();
+    readerStage.className = 'reader-stage' + (mode === 'vertical' ? '' : ' paged') + (r.zoomed ? ' zoomed' : '');
     readerStage.scrollTop = 0;
 
-    if (p.mode === 'vertical') {
-      renderVerticalReader();
-    } else {
-      renderPagedReader();
-    }
+    if (mode === 'vertical') renderVerticalReader();
+    else renderPagedReader();
     updatePageUi(r.pageIdx);
   }
 
   function createPageImg(url, pageNum) {
     const img = document.createElement('img');
-    img.className = state.prefs.mode === 'vertical' ? 'reader-page-img' : 'reader-paged-img';
+    img.className = effectiveReaderMode() === 'vertical' ? 'reader-page-img' : 'reader-paged-img';
     img.decoding = 'async';
     img.alt = `Página ${pageNum + 1}`;
     img.src = url;
@@ -1710,6 +2439,9 @@
       img.addEventListener('load', () => {
         loader.remove();
         slot.classList.add('loaded');
+        if (state.prefs.cropMargins && !img.dataset.cropped && Extras) {
+          Extras.cropWhiteMargins(img);
+        }
       });
       img.addEventListener('error', () => {
         loader.innerHTML = `Error cargando página ${idx + 1}. <u style="color:var(--accent)">Tocar para reintentar</u>`;
@@ -1731,7 +2463,7 @@
     const endCard = document.createElement('div');
     endCard.className = 'reader-end-card';
     endCard.innerHTML = `
-      <div class="reader-end-title">Fin de ${esc(r.chapters[r.chapIdx] ? r.chapters[r.chapIdx].name : 'capítulo')}</div>
+      <div class="reader-end-title" id="endStatusTxt">Fin de ${esc(r.chapters[r.chapIdx] ? r.chapters[r.chapIdx].name : 'capítulo')}</div>
       <div class="reader-end-btns">
         ${prevChap ? '<button id="endPrevBtn" class="secondary-btn" type="button">‹ Anterior</button>' : ''}
         ${nextChap
@@ -1764,8 +2496,26 @@
       }
       if (bestIdx >= 0) updatePageUi(bestIdx);
     }, { root: readerStage, threshold: [0.15, 0.5, 0.8] });
-
     slots.forEach((s) => r.observer.observe(s));
+
+    // Paso automático al siguiente capítulo al llegar al final haciendo scroll
+    if (state.prefs.autoNext && nextChap && !nextLocked) {
+      r.endObserver = new IntersectionObserver((entries) => {
+        const vis = entries.some((en) => en.isIntersecting && en.intersectionRatio > 0.75);
+        if (vis && !r.autoNextTimer && r.pageIdx >= r.pages.length - 2) {
+          const stTxt = $('endStatusTxt');
+          if (stTxt) stTxt.textContent = `Pasando automáticamente a ${nextChap.name}...`;
+          r.autoNextTimer = setTimeout(() => {
+            r.autoNextTimer = null;
+            if (r.open) switchChapter(r.chapIdx + 1);
+          }, 1100);
+        } else if (!vis && r.autoNextTimer) {
+          clearTimeout(r.autoNextTimer);
+          r.autoNextTimer = null;
+        }
+      }, { root: readerStage, threshold: [0.75] });
+      r.endObserver.observe(endCard);
+    }
 
     if (r.pageIdx > 0 && slots[r.pageIdx]) {
       setTimeout(() => slots[r.pageIdx].scrollIntoView({ behavior: 'auto', block: 'start' }), 60);
@@ -1774,40 +2524,46 @@
 
   function renderPagedReader() {
     const r = state.reader;
-    const url = r.pages[r.pageIdx];
+    const mode = effectiveReaderMode();
+    const dbl = isDoublePageNow() && (r.pageIdx + 1 < r.pages.length);
+
     const wrap = document.createElement('div');
-    wrap.className = 'reader-paged-wrap' + (state.prefs.fit === 'width' ? ' fit-width' : '');
+    wrap.className = (dbl ? 'reader-paged-spread' : 'reader-paged-wrap') + (!dbl && state.prefs.fit === 'width' ? ' fit-width' : '');
 
-    const loader = document.createElement('div');
-    loader.className = 'reader-page-loader';
-    loader.innerHTML = '<div class="spinner"></div><div>Cargando página...</div>';
-    wrap.appendChild(loader);
+    const indices = dbl
+      ? (mode === 'rtl' ? [r.pageIdx + 1, r.pageIdx] : [r.pageIdx, r.pageIdx + 1])
+      : [r.pageIdx];
 
-    const img = createPageImg(url, r.pageIdx);
-    img.style.display = 'none';
-    img.addEventListener('load', () => {
-      loader.remove();
-      img.style.display = 'block';
+    indices.forEach((pIdx) => {
+      const url = r.pages[pIdx];
+      const img = createPageImg(url, pIdx);
+      img.addEventListener('load', () => {
+        if (state.prefs.cropMargins && !img.dataset.cropped && Extras) {
+          Extras.cropWhiteMargins(img);
+        }
+      });
+      img.addEventListener('error', () => {
+        img.alt = 'Error al cargar (toca para reintentar)';
+      });
+      wrap.appendChild(img);
     });
-    img.addEventListener('error', () => {
-      loader.innerHTML = 'Error cargando la página. <u style="color:var(--accent)">Tocar para reintentar</u>';
-      loader.onclick = (e) => {
-        e.stopPropagation();
-        loader.innerHTML = '<div class="spinner"></div><div>Reintentando...</div>';
-        img.src = url.startsWith('blob:') ? url : (url + (url.includes('?') ? '&' : '?') + 'r=' + Date.now());
-      };
-    });
-    wrap.appendChild(img);
+
     readerStage.innerHTML = '';
     readerStage.appendChild(wrap);
 
-    for (let k = 1; k <= 2; k++) {
+    for (let k = 1; k <= 3; k++) {
       if (r.pageIdx + k < r.pages.length) {
         const pre = new Image();
         pre.src = r.pages[r.pageIdx + k];
       }
     }
   }
+
+  window.addEventListener('resize', () => {
+    if (state.reader.open && effectiveReaderMode() !== 'vertical') {
+      renderPagedReader();
+    }
+  });
 
   function goToPage(idx) {
     const r = state.reader;
@@ -1823,7 +2579,7 @@
       return;
     }
     r.pageIdx = idx;
-    if (state.prefs.mode === 'vertical') {
+    if (effectiveReaderMode() === 'vertical') {
       const slot = readerStage.querySelector(`.reader-page-slot[data-page="${idx}"]`);
       if (slot) slot.scrollIntoView({ behavior: 'auto', block: 'start' });
       updatePageUi(idx);
@@ -1844,53 +2600,97 @@
     location.replace(`#read/${r.manga.id}/${target.id}`);
   }
 
-  // Gestos del lector
+  // Gestos del lector: brillo deslizando por borde izquierdo + swipe paginado + doble toque zoom
+  let hudTimer = null;
+  function showBrightnessHud(dim) {
+    readerBrightnessHud.textContent = `Brillo: ${100 - dim}%`;
+    readerBrightnessHud.classList.remove('hidden');
+    clearTimeout(hudTimer);
+    hudTimer = setTimeout(() => readerBrightnessHud.classList.add('hidden'), 900);
+  }
+
   readerStage.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) return;
-    state.reader.touchStartX = e.touches[0].clientX;
-    state.reader.touchStartY = e.touches[0].clientY;
+    const t = e.touches[0];
+    state.reader.touchStartX = t.clientX;
+    state.reader.touchStartY = t.clientY;
     state.reader.touchMoved = false;
+    state.reader.brightnessDrag = (t.clientX < window.innerWidth * 0.14);
+    state.reader.brightnessStartDim = state.prefs.dim || 0;
   }, { passive: true });
 
   readerStage.addEventListener('touchmove', (e) => {
     if (e.touches.length !== 1) return;
-    const dx = Math.abs(e.touches[0].clientX - state.reader.touchStartX);
-    const dy = Math.abs(e.touches[0].clientY - state.reader.touchStartY);
-    if (dx > 12 || dy > 12) state.reader.touchMoved = true;
+    const t = e.touches[0];
+    const dx = t.clientX - state.reader.touchStartX;
+    const dy = t.clientY - state.reader.touchStartY;
+    if (Math.abs(dx) > 12 || Math.abs(dy) > 12) state.reader.touchMoved = true;
+
+    // Deslizar verticalmente por el borde izquierdo ajusta el brillo/filtro nocturno
+    if (state.reader.brightnessDrag && Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx) * 1.5) {
+      const deltaDim = Math.round((dy / 3.5)); // bajar dedo = más oscuro, subir = más brillo
+      const nextDim = Math.max(0, Math.min(70, state.reader.brightnessStartDim + deltaDim));
+      state.prefs.dim = nextDim;
+      readerDimmer.style.opacity = String(nextDim / 100);
+      showBrightnessHud(nextDim);
+    }
   }, { passive: true });
 
   readerStage.addEventListener('touchend', (e) => {
-    if (state.prefs.mode === 'vertical') return;
+    if (state.reader.brightnessDrag && state.reader.touchMoved) {
+      savePrefs();
+      state.reader.brightnessDrag = false;
+      return;
+    }
+    state.reader.brightnessDrag = false;
+
+    const mode = effectiveReaderMode();
+    if (mode === 'vertical' || state.reader.zoomed) return;
     if (window.visualViewport && window.visualViewport.scale > 1.05) return;
     if (!e.changedTouches.length) return;
     const dx = e.changedTouches[0].clientX - state.reader.touchStartX;
     const dy = e.changedTouches[0].clientY - state.reader.touchStartY;
     if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.4) {
-      const forward = state.prefs.mode === 'rtl' ? (dx > 0) : (dx < 0);
-      goToPage(state.reader.pageIdx + (forward ? 1 : -1));
+      const step = isDoublePageNow() ? 2 : 1;
+      const forward = mode === 'rtl' ? (dx > 0) : (dx < 0);
+      goToPage(state.reader.pageIdx + (forward ? step : -step));
     }
   }, { passive: true });
 
+  let singleTapTimer = null;
   readerStage.addEventListener('click', (e) => {
     if (state.reader.touchMoved) { state.reader.touchMoved = false; return; }
     if (e.target.closest('button, a')) return;
 
-    const w = window.innerWidth;
-    const x = e.clientX;
-    if (state.prefs.mode === 'vertical') {
-      setReaderChrome(!state.reader.chromeVisible);
+    const now = Date.now();
+    if (now - state.reader.lastTapTime < 280) {
+      // Doble toque -> Zoom 2x / 1x
+      clearTimeout(singleTapTimer);
+      state.reader.lastTapTime = 0;
+      state.reader.zoomed = !state.reader.zoomed;
+      readerStage.classList.toggle('zoomed', state.reader.zoomed);
+      showToast(state.reader.zoomed ? 'Zoom 2× (doble toque para salir)' : 'Zoom normal');
       return;
     }
+    state.reader.lastTapTime = now;
 
-    if (x < w * 0.28) {
-      const delta = state.prefs.mode === 'rtl' ? 1 : -1;
-      goToPage(state.reader.pageIdx + delta);
-    } else if (x > w * 0.72) {
-      const delta = state.prefs.mode === 'rtl' ? -1 : 1;
-      goToPage(state.reader.pageIdx + delta);
-    } else {
-      setReaderChrome(!state.reader.chromeVisible);
-    }
+    const x = e.clientX;
+    const w = window.innerWidth;
+    singleTapTimer = setTimeout(() => {
+      const mode = effectiveReaderMode();
+      if (mode === 'vertical' || state.reader.zoomed) {
+        setReaderChrome(!state.reader.chromeVisible);
+        return;
+      }
+      const step = isDoublePageNow() ? 2 : 1;
+      if (x < w * 0.28) {
+        goToPage(state.reader.pageIdx + (mode === 'rtl' ? step : -step));
+      } else if (x > w * 0.72) {
+        goToPage(state.reader.pageIdx + (mode === 'rtl' ? -step : step));
+      } else {
+        setReaderChrome(!state.reader.chromeVisible);
+      }
+    }, 240);
   });
 
   // Controles de las barras del lector
@@ -1900,23 +2700,41 @@
     else navigateHash('#library');
   });
 
+  readerBookmarkBtn.addEventListener('click', () => {
+    const r = state.reader;
+    const chap = r.chapters[r.chapIdx];
+    if (!chap || !r.manga || !Extras) return;
+    const added = Extras.togglePageBookmark({
+      mangaId: r.manga.id,
+      mangaTitle: r.manga.title,
+      chapterId: chap.id,
+      chapterName: chap.name,
+      pageIdx: r.pageIdx
+    });
+    updateBookmarkBtnUi();
+    showToast(added ? `Página ${r.pageIdx + 1} guardada en marcadores` : 'Marcador quitado');
+  });
+
   readerPrevChap.addEventListener('click', () => switchChapter(state.reader.chapIdx - 1));
   readerNextChap.addEventListener('click', () => switchChapter(state.reader.chapIdx + 1));
 
   readerSlider.addEventListener('input', () => {
-    const val = parseInt(readerSlider.value, 10) - 1;
-    readerPageNow.textContent = String(val + 1);
+    readerPageNow.textContent = String(parseInt(readerSlider.value, 10));
   });
   readerSlider.addEventListener('change', () => {
-    const val = parseInt(readerSlider.value, 10) - 1;
-    goToPage(val);
+    goToPage(parseInt(readerSlider.value, 10) - 1);
   });
 
   readerModeQuick.addEventListener('click', () => {
     const order = ['vertical', 'rtl', 'ltr'];
-    const next = order[(order.indexOf(state.prefs.mode) + 1) % order.length];
-    state.prefs.mode = next;
-    savePrefs();
+    const cur = effectiveReaderMode();
+    const next = order[(order.indexOf(cur) + 1) % order.length];
+    if (state.reader.manga && Extras && Extras.getMangaMode(state.reader.manga.id)) {
+      Extras.setMangaMode(state.reader.manga.id, next);
+    } else {
+      state.prefs.mode = next;
+      savePrefs();
+    }
     applyReaderVisualPrefs();
     renderReaderPages();
     showToast('Modo: ' + modeLabel(next));
@@ -1933,6 +2751,9 @@
 
   function openReaderSettingsSheet() {
     const p = state.prefs;
+    const m = state.reader.manga;
+    const mangaMode = (m && Extras) ? (Extras.getMangaMode(m.id) || 'default') : 'default';
+
     readerSheetBackdrop.classList.remove('hidden');
     readerSheet.classList.remove('hidden');
     readerSheet.innerHTML = `
@@ -1941,14 +2762,16 @@
         <button id="closeSheetBtn" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
       </div>
 
+      ${m ? `
       <div class="setting-group">
-        <span class="setting-label">Modo de lectura</span>
-        <div class="seg-control">
-          <button class="seg-btn ${p.mode === 'vertical' ? 'active' : ''}" data-rmode="vertical">Continuo (PDF)</button>
-          <button class="seg-btn ${p.mode === 'rtl' ? 'active' : ''}" data-rmode="rtl">Manga D→I</button>
-          <button class="seg-btn ${p.mode === 'ltr' ? 'active' : ''}" data-rmode="ltr">Paginado I→D</button>
+        <span class="setting-label">Modo solo para este manga</span>
+        <div class="seg-control" style="grid-template-columns:repeat(4,1fr)">
+          <button class="seg-btn ${mangaMode === 'default' ? 'active' : ''}" data-mmode="default">General</button>
+          <button class="seg-btn ${mangaMode === 'vertical' ? 'active' : ''}" data-mmode="vertical">PDF</button>
+          <button class="seg-btn ${mangaMode === 'rtl' ? 'active' : ''}" data-mmode="rtl">D→I</button>
+          <button class="seg-btn ${mangaMode === 'ltr' ? 'active' : ''}" data-mmode="ltr">I→D</button>
         </div>
-      </div>
+      </div>` : ''}
 
       <div class="setting-group">
         <span class="setting-label">Ajuste de imagen</span>
@@ -1959,51 +2782,48 @@
       </div>
 
       <div class="setting-group">
-        <span class="setting-label">Espacio entre páginas</span>
+        <span class="setting-label">Espacio entre páginas · Paso automático</span>
         <div class="seg-control two">
-          <button class="seg-btn ${!p.gap ? 'active' : ''}" data-rgap="0">Sin espacio (PDF)</button>
-          <button class="seg-btn ${p.gap ? 'active' : ''}" data-rgap="1">Con separación</button>
+          <button class="seg-btn ${!p.gap ? 'active' : ''}" data-rgap="toggle">${p.gap ? 'Separadas' : 'Sin espacio'}</button>
+          <button class="seg-btn ${p.autoNext ? 'active' : ''}" data-rautonext="toggle">${p.autoNext ? 'Auto-sig: Sí' : 'Auto-sig: No'}</button>
         </div>
       </div>
 
       <div class="setting-group">
-        <span class="setting-label">Indicador de página en esquina</span>
+        <span class="setting-label">Recorte de márgenes · Doble página</span>
         <div class="seg-control two">
-          <button class="seg-btn ${p.miniStatus ? 'active' : ''}" data-rmini="1">Mostrar</button>
-          <button class="seg-btn ${!p.miniStatus ? 'active' : ''}" data-rmini="0">Ocultar</button>
+          <button class="seg-btn ${p.cropMargins ? 'active' : ''}" data-rcrop="toggle">${p.cropMargins ? 'Recorte: Sí' : 'Recorte: No'}</button>
+          <button class="seg-btn ${p.doublePage ? 'active' : ''}" data-rdbl="toggle">${p.doublePage ? '2 págs: Sí' : '2 págs: No'}</button>
         </div>
       </div>
 
       <div class="setting-group" style="margin-bottom:0">
-        <span class="setting-label">Filtro nocturno: <strong id="rDimVal">${p.dim}%</strong></span>
+        <span class="setting-label">Filtro nocturno (o desliza borde izquierdo): <strong id="rDimVal">${p.dim}%</strong></span>
         <input id="rDimSlider" type="range" min="0" max="70" step="5" value="${p.dim}" style="width:100%;accent-color:var(--accent)">
       </div>
     `;
 
     $('closeSheetBtn').addEventListener('click', closeReaderSheet);
-    readerSheet.querySelectorAll('[data-rmode]').forEach((b) => {
+    readerSheet.querySelectorAll('[data-mmode]').forEach((b) => {
       b.addEventListener('click', () => {
-        state.prefs.mode = b.dataset.rmode;
-        savePrefs(); applyReaderVisualPrefs(); renderReaderPages(); openReaderSettingsSheet();
+        if (m && Extras) Extras.setMangaMode(m.id, b.dataset.mmode);
+        applyReaderVisualPrefs(); renderReaderPages(); openReaderSettingsSheet();
       });
     });
     readerSheet.querySelectorAll('[data-rfit]').forEach((b) => {
-      b.addEventListener('click', () => {
-        state.prefs.fit = b.dataset.rfit;
-        savePrefs(); renderReaderPages(); openReaderSettingsSheet();
-      });
+      b.addEventListener('click', () => { state.prefs.fit = b.dataset.rfit; savePrefs(); renderReaderPages(); openReaderSettingsSheet(); });
     });
-    readerSheet.querySelectorAll('[data-rgap]').forEach((b) => {
-      b.addEventListener('click', () => {
-        state.prefs.gap = b.dataset.rgap === '1';
-        savePrefs(); renderReaderPages(); openReaderSettingsSheet();
-      });
+    readerSheet.querySelector('[data-rgap]').addEventListener('click', () => {
+      state.prefs.gap = !state.prefs.gap; savePrefs(); renderReaderPages(); openReaderSettingsSheet();
     });
-    readerSheet.querySelectorAll('[data-rmini]').forEach((b) => {
-      b.addEventListener('click', () => {
-        state.prefs.miniStatus = b.dataset.rmini === '1';
-        savePrefs(); applyReaderVisualPrefs(); openReaderSettingsSheet();
-      });
+    readerSheet.querySelector('[data-rautonext]').addEventListener('click', () => {
+      state.prefs.autoNext = !state.prefs.autoNext; savePrefs(); renderReaderPages(); openReaderSettingsSheet();
+    });
+    readerSheet.querySelector('[data-rcrop]').addEventListener('click', () => {
+      state.prefs.cropMargins = !state.prefs.cropMargins; savePrefs(); renderReaderPages(); openReaderSettingsSheet();
+    });
+    readerSheet.querySelector('[data-rdbl]').addEventListener('click', () => {
+      state.prefs.doublePage = !state.prefs.doublePage; savePrefs(); renderReaderPages(); openReaderSettingsSheet();
     });
     $('rDimSlider').addEventListener('input', (e) => {
       state.prefs.dim = parseInt(e.target.value, 10) || 0;
@@ -2055,5 +2875,6 @@
   }
 
   // ---------------- Arranque ----------------
+  checkStartupPin();
   refreshDownloadsIndex().then(() => handleRoute());
 })();

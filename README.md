@@ -19,10 +19,13 @@ instalar, encender, apagar y abrir el lector en el navegador.
 | `install.ps1` | `install.sh` | Descarga la release oficial de Suwayomi (incluye su propio Java) y la extrae. |
 | `setup-sources.ps1` | `setup-sources.sh` | Con el servidor encendido, añade el repositorio de extensiones [Keiyoushi](https://github.com/keiyoushi/extensions). |
 | `clear-history.ps1` | `clear-history.sh` | Borra el historial de lectura completo o de un manga concreto (`-MangaId` / `--manga-id`), con copia de seguridad previa. |
-| `verificar-extensiones.ps1` | — | Comprueba en VirusTotal las extensiones instaladas (solo Windows; necesita una API key gratuita). |
-| `setup-tailscale.ps1` | `setup-tailscale.sh` | Asistente visual para usar Suwayomi desde el móvil con Tailscale (acceso privado HTTPS, código QR en Windows y control de suspensión). |
-| `mobile/` | `mobile/` | Lector web móvil estilo app (PWA, ruta `/movil/`): modo continuo tipo PDF al 100% del ancho o paginado, barra inferior, filtro nocturno y sincronización con Suwayomi. |
+| `update-suwayomi.ps1` | `update-suwayomi.sh` | Comprueba la última versión oficial en GitHub y actualiza Suwayomi conservando tus datos y biblioteca. |
+| `backup-restore.ps1` | `backup-restore.sh` | Crea y restaura copias de seguridad (`database.mv.db` y `.tachibk` compatible con Mihon/Tachiyomi). |
+| `verificar-extensiones.ps1` | `verificar-extensiones.sh` | Comprueba en VirusTotal las extensiones instaladas (necesita una API key gratuita). |
+| `setup-tailscale.ps1` | `setup-tailscale.sh` | Asistente visual para usar Suwayomi desde el móvil con Tailscale (acceso privado HTTPS, código QR y control de suspensión). |
+| `mobile/` | `mobile/` | App web móvil instalable (PWA, ruta `/movil/`): lector tipo PDF o paginado, modo por manga, paso automático, Wake Lock, zoom, recorte de bordes, brillo táctil, doble página, novedades, búsqueda global, categorías, migración, marcadores, estadísticas, descargas offline con cola y bloqueo PIN. |
 | `mobile-server.ps1` | `mobile-server.py` | Servidor local ligero (solo `127.0.0.1:4568`) que sirve `mobile/` y acciones seguras desde el móvil (como borrar historial) sin tocar `webUI` de Suwayomi. |
+| `wake-pc.ps1` | `wake-pc.sh` | Utilidad opcional de Wake-on-LAN: muestra la dirección MAC local o envía un paquete mágico en tu red local. |
 | — | `common.sh` | Configuración compartida de los scripts de macOS. |
 | — | `crear-app.sh` | Opcional: crea `Suwayomi.app` para abrir el panel sin ventana de Terminal. |
 
@@ -102,14 +105,12 @@ bash install.sh --version v2.4.2366 --install-dir "$HOME/Suwayomi"
 - **Sigue activo tras apagar** (macOS): `lsof -i :4567` da el PID; ciérralo con `kill <pid>`.
 - **macOS bloquea `java`:** `xattr -dr com.apple.quarantine ~/Suwayomi`.
 
-## Posibles mejoras (en desarrollo)
+## Posibles mejoras futuras
 
-Este proyecto está en desarrollo activo. Algunas ideas previstas para futuras versiones:
-
-- **Lector móvil:** paso automático al siguiente capítulo al hacer scroll, modo de lectura guardado por manga, *Wake Lock* (pantalla siempre encendida al leer), doble toque para zoom, recorte automático de márgenes blancos, brillo deslizando por el borde y doble página en horizontal/tablet.
-- **Biblioteca y descubrimiento:** pestaña de *Novedades* con actualización desde el móvil, búsqueda global entre todas las fuentes, ordenación flexible, gestión de categorías, migración entre fuentes, marcadores de páginas y estadísticas de lectura.
-- **Modo sin conexión:** descarga automática de los siguientes *N* capítulos, borrado automático al terminar un capítulo, cola de descargas pausable/cancelable e indicador de espacio disponible.
-- **Privacidad y panel (Windows / macOS / Linux):** bloqueo opcional con PIN en `/movil/`, actualizador de Suwayomi en 1 clic, copias de seguridad guiadas (compatibles con Mihon/Tachiyomi), inicio automático con el equipo e icono en bandeja, paridad completa en macOS/Linux (QR y VirusTotal) y Wake-on-LAN.
+- Soporte completo con instalador y panel visual para **Linux** (`.desktop` / GTK).
+- Notificaciones push nativas en el móvil al detectar capítulos nuevos en segundo plano.
+- Importación directa de copias `.tachibk` desde la propia app móvil (además del Suwayomi completo).
+- Sincronización con trackers externos (AniList / MyAnimeList) desde la interfaz móvil.
 
 ## Licencia
 
