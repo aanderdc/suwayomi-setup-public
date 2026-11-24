@@ -714,6 +714,8 @@
   async function renderVault() {
     if (!state.vaultOpen) return;
     const incognito = Extras.isVaultIncognito();
+    const vaultHistEnabled = Extras.isVaultHistoryEnabled();
+    const vaultHistory = Extras.getVaultHistory();
 
     let bodyHtml = '';
     if (state.vaultTab === 'mangas') {
@@ -744,6 +746,40 @@
           <div class="empty-state">
             <h3>Bóveda vacía</h3>
             <p>Ve a la pestaña <strong>Fuentes</strong> para instalar extensiones exclusivas de la bóveda (no aparecerán en tu Suwayomi normal ni en el historial del PC) y añadir tus mangas aquí.</p>
+          </div>
+        `}
+      `;
+    } else if (state.vaultTab === 'history') {
+      bodyHtml = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span style="font-size:12px;color:#c4b5fd">Historial privado (solo visible dentro de la bóveda)</span>
+          ${vaultHistory.length ? '<button id="vhClearAllBtn" class="secondary-btn" type="button" style="padding:5px 10px;font-size:11.5px;color:#ff8690;border-color:rgba(255,77,90,0.35)">Borrar todo</button>' : ''}
+        </div>
+        ${vaultHistory.length ? `<div class="list-stack">${vaultHistory.map((h) => {
+          const dl = isDownloaded(h.chapterId, true);
+          const locked = state.vaultOffline && !dl;
+          const pageTxt = h.isRead
+            ? 'Leído'
+            : (h.pageCount > 0 ? `Pág. ${(h.lastPageRead || 0) + 1} / ${h.pageCount}` : 'En progreso');
+          const cover = coverUrlFor({ id: h.mangaId, thumbnailUrl: h.thumbnailUrl }, true);
+          return `
+            <div class="list-card ${locked ? 'offline-dim' : ''}" data-vh-manga="${h.mangaId}">
+              <img class="list-thumb" src="${esc(cover)}" data-cover-id="${dlKey(h.mangaId, true)}" alt="" loading="lazy">
+              <div class="list-body">
+                <div class="list-title">${esc(h.mangaTitle)}</div>
+                <div class="list-sub">${esc(h.chapterName)} ${dl ? '· ✓ Descargado' : ''}</div>
+                <div class="list-sub">${pageTxt} · ${formatDate(h.readAt)}</div>
+              </div>
+              <button class="list-cta" style="background:#7c3aed" data-vh-read="${h.mangaId}:${h.chapterId}" type="button">${locked ? 'Sin red' : 'Leer'}</button>
+              <button class="list-del-btn" data-vh-del="${h.mangaId}" type="button" title="Quitar del historial de la bóveda" aria-label="Quitar">×</button>
+            </div>
+          `;
+        }).join('')}</div>` : `
+          <div class="empty-state">
+            <h3>Historial de la bóveda vacío</h3>
+            <p>${vaultHistEnabled
+              ? 'Lo que leas dentro de la bóveda aparecerá solo aquí para retomarlo rápido, sin dejar rastro en Suwayomi PC ni en Recientes normales.'
+              : 'El historial privado de la bóveda está desactivado en Opciones.'}</p>
           </div>
         `}
       `;
@@ -820,11 +856,18 @@
           <p style="margin:0 0 10px;font-size:12px;color:var(--muted);line-height:1.45">
             Esta bóveda usa su propia instancia y carpeta de datos separada (<code>Tachidesk-Vault</code>). Nada de lo que instales, busques o leas aquí aparece en <code>http://localhost:4567/history</code> ni en <code>/browse?tab=sources</code>. Al bloquear la bóveda, el proceso se apaga por completo.
           </p>
-          <div class="setting-group" style="margin-bottom:0">
-            <span class="setting-label">Modo incógnito (no guardar historial ni siquiera en la bóveda)</span>
+          <div class="setting-group">
+            <span class="setting-label">Historial privado dentro de la bóveda</span>
             <div class="seg-control two">
-              <button class="seg-btn ${incognito ? 'active' : ''}" data-vinc="1">Sin historial</button>
-              <button class="seg-btn ${!incognito ? 'active' : ''}" data-vinc="0">Guardar en bóveda</button>
+              <button class="seg-btn ${vaultHistEnabled ? 'active' : ''}" data-vhist-en="1">Activado</button>
+              <button class="seg-btn ${!vaultHistEnabled ? 'active' : ''}" data-vhist-en="0">Desactivado</button>
+            </div>
+          </div>
+          <div class="setting-group" style="margin-bottom:0">
+            <span class="setting-label">Modo incógnito (no guardar historial en Tachidesk-Vault del PC)</span>
+            <div class="seg-control two">
+              <button class="seg-btn ${incognito ? 'active' : ''}" data-vinc="1">Solo en móvil</button>
+              <button class="seg-btn ${!incognito ? 'active' : ''}" data-vinc="0">También en DB bóveda</button>
             </div>
           </div>
         </div>
@@ -855,6 +898,7 @@
         </div>
         <div class="vault-tabs">
           <button class="vault-tab-btn ${state.vaultTab === 'mangas' ? 'active' : ''}" data-vtab="mangas" type="button">Mangas (${state.vaultLibrary.length})</button>
+          <button class="vault-tab-btn ${state.vaultTab === 'history' ? 'active' : ''}" data-vtab="history" type="button">Historial (${vaultHistory.length})</button>
           <button class="vault-tab-btn ${state.vaultTab === 'sources' ? 'active' : ''}" data-vtab="sources" type="button">Fuentes (${state.vaultSources.length})</button>
           <button class="vault-tab-btn ${state.vaultTab === 'options' ? 'active' : ''}" data-vtab="options" type="button">Opciones</button>
         </div>
@@ -879,6 +923,40 @@
       if (ref) ref.addEventListener('click', async () => { await loadVaultData(); renderVault(); });
       vaultView.querySelectorAll('[data-vmanga-id]').forEach((card) => {
         card.addEventListener('click', () => navigateHash('#vmanga/' + card.dataset.vmangaId));
+      });
+    } else if (state.vaultTab === 'history') {
+      const clrAll = $('vhClearAllBtn');
+      if (clrAll) {
+        clrAll.addEventListener('click', () => {
+          if (!confirm('¿Borrar todo el historial privado de la bóveda?')) return;
+          Extras.clearVaultHistory();
+          showToast('Historial de la bóveda borrado');
+          renderVault();
+        });
+      }
+      vaultView.querySelectorAll('[data-vh-manga]').forEach((card) => {
+        card.addEventListener('click', (e) => {
+          const del = e.target.closest('[data-vh-del]');
+          if (del) {
+            e.stopPropagation();
+            Extras.removeVaultHistoryManga(Number(del.dataset.vhDel));
+            showToast('Quitado del historial de la bóveda');
+            renderVault();
+            return;
+          }
+          const rd = e.target.closest('[data-vh-read]');
+          if (rd) {
+            e.stopPropagation();
+            const [mId, cId] = rd.dataset.vhRead.split(':').map(Number);
+            if (state.vaultOffline && !isDownloaded(cId, true)) {
+              showToast('No descargado. Conéctate al PC para leer este capítulo.');
+              return;
+            }
+            navigateHash(`#vread/${mId}/${cId}`);
+            return;
+          }
+          navigateHash('#vmanga/' + card.dataset.vhManga);
+        });
       });
     } else if (state.vaultTab === 'sources') {
       if (state.vaultActiveSource) {
@@ -929,6 +1007,9 @@
         });
       }
     } else {
+      vaultView.querySelectorAll('[data-vhist-en]').forEach((b) => {
+        b.addEventListener('click', () => { Extras.setVaultHistoryEnabled(b.dataset.vhistEn === '1'); renderVault(); });
+      });
       vaultView.querySelectorAll('[data-vinc]').forEach((b) => {
         b.addEventListener('click', () => { Extras.setVaultIncognito(b.dataset.vinc === '1'); renderVault(); });
       });
@@ -3341,6 +3422,18 @@
       readerPageTotal.textContent = String(r.pages.length);
 
       renderReaderPages();
+      if (inVault && r.manga && chap && Extras) {
+        Extras.recordVaultHistory({
+          mangaId: r.manga.id,
+          mangaTitle: r.manga.title,
+          thumbnailUrl: r.manga.thumbnailUrl || '',
+          chapterId: chap.id,
+          chapterName: chap.name,
+          lastPageRead: r.pageIdx,
+          pageCount: r.pages.length,
+          isRead: r.markedRead
+        });
+      }
       setTimeout(() => { if (r.open) setReaderChrome(false); }, 1400);
     } catch (err) {
       const notDl = err && err.message === 'OFFLINE_NOT_DOWNLOADED';
@@ -3448,6 +3541,18 @@
 
       // Si estamos en la bóveda aislada: NUNCA toca el Suwayomi normal (4567)
       if (r.inVault) {
+        if (Extras && r.manga) {
+          Extras.recordVaultHistory({
+            mangaId: r.manga.id,
+            mangaTitle: r.manga.title,
+            thumbnailUrl: r.manga.thumbnailUrl || '',
+            chapterId: chap.id,
+            chapterName: chap.name,
+            lastPageRead: pageIdx,
+            pageCount: r.pages.length,
+            isRead: !!(patch.isRead || r.markedRead)
+          });
+        }
         if (Extras && Extras.isVaultIncognito()) {
           Extras.saveVaultChapterProgress('v_' + chap.id, patch);
         } else if (!state.vaultOffline) {

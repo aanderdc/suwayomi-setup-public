@@ -255,6 +255,8 @@
       mangas: {},      // id -> { id, title, thumbnailUrl, sourceId, addedAt }
       sourceIds: [],   // string[] de source.id ocultos
       incognito: true, // true = no envía progreso ni historial a Suwayomi PC
+      historyEnabled: true, // historial privado SOLO dentro de la bóveda
+      history: [],     // [{ mangaId, mangaTitle, thumbnailUrl, chapterId, chapterName, lastPageRead, pageCount, isRead, readAt }]
       progress: {}     // chapterId -> { lastPageRead, isRead, updatedAt }
     };
   }
@@ -265,6 +267,7 @@
       return Object.assign(defaultVault(), raw, {
         mangas: raw.mangas || {},
         sourceIds: Array.isArray(raw.sourceIds) ? raw.sourceIds.map(String) : [],
+        history: Array.isArray(raw.history) ? raw.history : [],
         progress: raw.progress || {}
       });
     } catch {
@@ -375,6 +378,54 @@
       isRead: !!(patch.isRead || cur.isRead),
       updatedAt: Date.now()
     };
+    saveVault(v);
+  }
+
+  function isVaultHistoryEnabled() {
+    return loadVault().historyEnabled !== false;
+  }
+
+  function setVaultHistoryEnabled(val) {
+    const v = loadVault();
+    v.historyEnabled = !!val;
+    saveVault(v);
+  }
+
+  function getVaultHistory() {
+    return loadVault().history.slice().sort((a, b) => (b.readAt || 0) - (a.readAt || 0));
+  }
+
+  function recordVaultHistory(entry) {
+    if (!entry || !entry.mangaId || !entry.chapterId) return;
+    const v = loadVault();
+    if (v.historyEnabled === false) return;
+    const mId = Number(entry.mangaId);
+    v.history = v.history.filter((x) => Number(x.mangaId) !== mId);
+    v.history.unshift({
+      mangaId: mId,
+      mangaTitle: entry.mangaTitle || `Manga #${mId}`,
+      thumbnailUrl: entry.thumbnailUrl || '',
+      chapterId: Number(entry.chapterId),
+      chapterName: entry.chapterName || '',
+      lastPageRead: Number(entry.lastPageRead || 0),
+      pageCount: Number(entry.pageCount || 0),
+      isRead: !!entry.isRead,
+      readAt: Date.now()
+    });
+    v.history = v.history.slice(0, 80);
+    saveVault(v);
+  }
+
+  function removeVaultHistoryManga(mangaId) {
+    const v = loadVault();
+    const mId = Number(mangaId);
+    v.history = v.history.filter((x) => Number(x.mangaId) !== mId);
+    saveVault(v);
+  }
+
+  function clearVaultHistory() {
+    const v = loadVault();
+    v.history = [];
     saveVault(v);
   }
 
@@ -506,6 +557,12 @@
     setVaultIncognito,
     getVaultChapterProgress,
     saveVaultChapterProgress,
+    isVaultHistoryEnabled,
+    setVaultHistoryEnabled,
+    getVaultHistory,
+    recordVaultHistory,
+    removeVaultHistoryManga,
+    clearVaultHistory,
     clearVaultAll,
     normText,
     isNsfwTag,
