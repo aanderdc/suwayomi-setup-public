@@ -104,26 +104,12 @@ bash install.sh --version v2.4.2366 --install-dir "$HOME/Suwayomi"
 
 ## Posibles mejoras (en desarrollo)
 
-Este proyecto está en desarrollo activo. Algunas ideas y mejoras previstas o posibles para futuras versiones:
+Este proyecto está en desarrollo activo. Algunas ideas previstas para futuras versiones:
 
-### App móvil (`/movil/`)
-- **Lector aún más personalizable:** ajuste de lectura por manga (p. ej. recordar si un manga concreto es vertical/webtoon o paginado D→I), modo doble página en horizontal/tablets, recorte automático de bordes blancos y doble toque para hacer zoom.
-- **Paso automático entre capítulos:** pasar al capítulo siguiente al llegar al final haciendo scroll continuo sin pulsar botón.
-- **Gestos y comodidad:** control de brillo deslizando por el borde, bloquear orientación de pantalla, y mantener pantalla encendida (*Wake Lock*) mientras lees.
-- **Organización y biblioteca:** crear/editar categorías desde el móvil, ordenar la biblioteca (último leído, alfabético, sin leer, añadidos recientes), búsqueda global entre todas las fuentes instaladas y actualización masiva de biblioteca desde el móvil.
-- **Notificaciones de nuevos capítulos:** aviso visual en la pestaña *Novedades / Actualizaciones* con los capítulos recién salidos de tu biblioteca.
-
-### Modo sin conexión y descargas
-- **Descarga automática:** opción para descargar automáticamente los próximos *N* capítulos sin leer o borrar un capítulo del móvil al terminarlo.
-- **Gestión de cola de descargas:** pausar, cancelar o reordenar descargas en curso desde una vista dedicada.
-- **Indicador de cuota disponible:** mostrar cuánto espacio libre tiene el navegador en el móvil y avisar antes de llenarlo.
-
-### Panel de control (Windows y macOS)
-- **Actualizador de Suwayomi en 1 clic:** comprobar si hay nueva versión oficial en GitHub y actualizar conservando la biblioteca.
-- **Inicio automático con el PC:** opción reversible para arrancar Suwayomi y el servidor móvil al encender Windows/macOS (y opción de icono en bandeja).
-- **Copias de seguridad guiadas:** botón en el panel para exportar/restaurar `database.mv.db` y backups compatibles con Mihon/Tachiyomi.
-- **Código QR en macOS y soporte Linux:** paridad visual completa entre Windows, macOS y Linux (incluyendo escaneo de VirusTotal en macOS).
-- **Encendido remoto (Wake-on-LAN):** poder despertar el PC desde el móvil cuando esté suspendido o apagado.
+- **Lector móvil:** paso automático al siguiente capítulo al hacer scroll, modo de lectura guardado por manga, *Wake Lock* (pantalla siempre encendida al leer), doble toque para zoom, recorte automático de márgenes blancos, brillo deslizando por el borde y doble página en horizontal/tablet.
+- **Biblioteca y descubrimiento:** pestaña de *Novedades* con actualización desde el móvil, búsqueda global entre todas las fuentes, ordenación flexible, gestión de categorías, migración entre fuentes, marcadores de páginas y estadísticas de lectura.
+- **Modo sin conexión:** descarga automática de los siguientes *N* capítulos, borrado automático al terminar un capítulo, cola de descargas pausable/cancelable e indicador de espacio disponible.
+- **Privacidad y panel (Windows / macOS / Linux):** bloqueo opcional con PIN en `/movil/`, actualizador de Suwayomi en 1 clic, copias de seguridad guiadas (compatibles con Mihon/Tachiyomi), inicio automático con el equipo e icono en bandeja, paridad completa en macOS/Linux (QR y VirusTotal) y Wake-on-LAN.
 
 ## Licencia
 
