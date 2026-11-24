@@ -18,7 +18,8 @@
     cropMargins: false,   // recorte automatico de margenes blancos
     doublePage: true,     // doble pagina en horizontal / tablet (modo paginado)
     autoDlNext: 0,        // 0 | 1 | 3 | 5 descargar siguientes N capitulos al abrir uno
-    autoDelRead: false    // borrar descarga del movil al terminar un capitulo
+    autoDelRead: false,   // borrar descarga del movil al terminar un capitulo
+    filterNsfw: false     // filtro +18 para ocultar mangas, tags y fuentes +18 fuera de la boveda
   };
 
   function loadPrefs() {
@@ -41,6 +42,7 @@
     library: [],
     categories: [],
     selectedCat: 'all',
+    selectedTag: '',
     onlyDownloaded: false,
     librarySort: 'title', // 'title' | 'lastRead' | 'unread' | 'added'
     librarySearch: '',
@@ -50,10 +52,12 @@
     activeSource: null,
     sourceMode: 'POPULAR',
     sourceQuery: '',
+    sourceTag: '',
     sourcePage: 1,
     sourceHasNext: false,
     sourceMangas: [],
     globalSearchQuery: '',
+    globalSearchTag: '',
     globalSearchResults: [],
     // Descargas locales
     downloads: new Map(),
@@ -389,6 +393,127 @@
     appSheet.classList.add('hidden');
   }
   appSheetBackdrop.addEventListener('click', closeAppSheet);
+
+  function shouldHideNsfw(inVault = false) {
+    return !inVault && !!state.prefs.filterNsfw;
+  }
+
+  function isMangaBlockedNsfw(manga, inVault = false) {
+    return shouldHideNsfw(inVault) && Extras && Extras.isNsfwManga(manga);
+  }
+
+  function isSourceBlockedNsfw(srcOrExt, inVault = false) {
+    return shouldHideNsfw(inVault) && Extras && Extras.isNsfwSource(srcOrExt);
+  }
+
+  const POPULAR_TAGS = [
+    'Acción', 'Aventura', 'Comedia', 'Drama', 'Fantasía', 'Isekai', 'Misterio',
+    'Romance', 'Sci-Fi', 'Seinen', 'Shonen', 'Slice of Life', 'Sobrenatural',
+    'Terror', 'Artes Marciales', 'Deportes', 'Histórico', 'Psicológico', 'Webtoon'
+  ];
+
+  async function openTagExplorer(tag, inVault = false) {
+    const cleanTag = String(tag || '').trim();
+    if (!cleanTag) return;
+    if (shouldHideNsfw(inVault) && Extras && Extras.isNsfwTag(cleanTag)) {
+      showToast('Etiqueta oculta por el filtro +18 (Ajustes)');
+      return;
+    }
+
+    const libPool = (inVault ? state.vaultLibrary : state.library).filter((m) => {
+      if (!inVault && isMangaSecret(m)) return false;
+      if (isMangaBlockedNsfw(m, inVault)) return false;
+      return Extras && Extras.mangaHasTag(m, cleanTag);
+    });
+
+    const isOff = inVault ? state.vaultOffline : state.offline;
+
+    openAppSheet(`
+      <div class="sheet-title">
+        <span>🏷️ ${esc(cleanTag)}</span>
+        <button id="tagExpClose" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      <div style="margin-bottom:14px">
+        <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px">
+          En ${inVault ? 'la bóveda' : 'tu biblioteca'} (${libPool.length})
+        </div>
+        ${libPool.length ? `<div class="manga-grid">${libPool.map((m) => `
+          <div class="manga-card" data-tag-open-m="${m.id}">
+            <div class="manga-cover-wrap">
+              <img src="${esc(coverUrlFor(m, inVault))}" data-cover-id="${dlKey(m.id, inVault)}" alt="" loading="lazy">
+              <div class="manga-cover-grad"></div>
+              <div class="manga-card-title">${esc(m.title)}</div>
+            </div>
+          </div>
+        `).join('')}</div>` : '<p style="margin:0;font-size:12.5px;color:var(--muted)">Ningún manga con esta etiqueta en tu biblioteca todavía.</p>'}
+      </div>
+      <div>
+        <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px">En tus fuentes instaladas</div>
+        <div id="tagRemoteWrap">
+          ${isOff
+            ? '<p style="font-size:12.5px;color:var(--muted)">Sin conexión con el PC para buscar en fuentes.</p>'
+            : '<div class="spinner"></div>'}
+        </div>
+      </div>
+    `);
+
+    attachCoverFallbacks(appSheet);
+    $('tagExpClose').addEventListener('click', closeAppSheet);
+    appSheet.querySelectorAll('[data-tag-open-m]').forEach((c) => {
+      c.addEventListener('click', () => {
+        closeAppSheet();
+        navigateHash(`#${inVault ? 'vmanga' : 'manga'}/${c.dataset.tagOpenM}`);
+      });
+    });
+
+    if (isOff) return;
+
+    try {
+      const srcs = inVault
+        ? state.vaultSources
+        : (await ensureAllSourcesLoaded()).filter((s) => (!Extras || !Extras.isSourceHidden(s.id)) && !isSourceBlockedNsfw(s, false));
+      const groups = await Promise.all(srcs.slice(0, 8).map(async (src) => {
+        try {
+          const data = await gql(M_SOURCE_MANGAS, {
+            input: { source: String(src.id), type: 'SEARCH', page: 1, query: cleanTag }
+          }, 12000, inVault);
+          const mangas = ((data.fetchSourceManga && data.fetchSourceManga.mangas) || [])
+            .filter((m) => !isMangaBlockedNsfw(m, inVault))
+            .slice(0, 9);
+          return { source: src, mangas };
+        } catch {
+          return { source: src, mangas: [] };
+        }
+      }));
+      const hits = groups.filter((g) => g.mangas.length > 0);
+      const wrap = $('tagRemoteWrap');
+      if (!wrap) return;
+      wrap.innerHTML = hits.length ? hits.map((g) => `
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">${esc(g.source.name)}</div>
+          <div class="manga-grid">${g.mangas.map((m) => `
+            <div class="manga-card" data-tag-rem-m="${m.id}">
+              <div class="manga-cover-wrap">
+                <img src="${esc(assetUrl(m.thumbnailUrl, inVault))}" alt="" loading="lazy">
+                <div class="manga-cover-grad"></div>
+                <div class="manga-card-title">${esc(m.title)}</div>
+              </div>
+            </div>
+          `).join('')}</div>
+        </div>
+      `).join('') : '<p style="font-size:12.5px;color:var(--muted)">No se encontraron resultados remotos para esta etiqueta.</p>';
+
+      wrap.querySelectorAll('[data-tag-rem-m]').forEach((c) => {
+        c.addEventListener('click', () => {
+          closeAppSheet();
+          navigateHash(`#${inVault ? 'vmanga' : 'manga'}/${c.dataset.tagRemM}`);
+        });
+      });
+    } catch {
+      const wrap = $('tagRemoteWrap');
+      if (wrap) wrap.innerHTML = '<p style="font-size:12.5px;color:var(--muted)">Error buscando en fuentes.</p>';
+    }
+  }
 
   function isMangaSecret(manga) {
     if (!Extras || !manga) return false;
@@ -1157,7 +1282,7 @@
       }
       mangas(condition: { inLibrary: true }, order: [{ by: TITLE, byType: ASC }]) {
         nodes {
-          id title thumbnailUrl inLibrary inLibraryAt unreadCount sourceId
+          id title thumbnailUrl inLibrary inLibraryAt unreadCount sourceId genre
           categories { nodes { id name } }
           firstUnreadChapter { id name chapterNumber sourceOrder }
           lastReadChapter { id name chapterNumber sourceOrder lastReadAt lastPageRead }
@@ -1199,7 +1324,7 @@
   const Q_SOURCES = `
     query SourcesList {
       sources {
-        nodes { id name displayName lang iconUrl supportsLatest }
+        nodes { id name displayName lang iconUrl supportsLatest contentWarning }
       }
     }
   `;
@@ -1299,7 +1424,7 @@
     mutation FetchSource($input: FetchSourceMangaInput!) {
       fetchSourceManga(input: $input) {
         hasNextPage
-        mangas { id title thumbnailUrl inLibrary sourceId }
+        mangas { id title thumbnailUrl inLibrary sourceId genre }
       }
     }
   `;
@@ -1308,7 +1433,7 @@
     query GetExtensions {
       extensions {
         nodes {
-          pkgName name lang versionName iconUrl isInstalled hasUpdate isObsolete
+          pkgName name lang versionName iconUrl isInstalled hasUpdate isObsolete contentWarning
         }
       }
     }
@@ -1318,7 +1443,7 @@
     mutation FetchExtensions {
       fetchExtensions(input: {}) {
         extensions {
-          pkgName name lang versionName iconUrl isInstalled hasUpdate isObsolete
+          pkgName name lang versionName iconUrl isInstalled hasUpdate isObsolete contentWarning
         }
       }
     }
@@ -1385,6 +1510,7 @@
     const q = extSearch.trim().toLowerCase();
     const list = cachedExtensions
       .filter((e) => {
+        if (isSourceBlockedNsfw(e, forVault)) return false;
         if (extFilter === 'installed' && !e.isInstalled) return false;
         if (extFilter === 'es' && (e.lang || '').toLowerCase() !== 'es') return false;
         if (extFilter === 'en' && (e.lang || '').toLowerCase() !== 'en') return false;
@@ -1685,7 +1811,7 @@
     }
 
     headerSub.classList.remove('hidden');
-    const visibleAll = state.library.filter((m) => !isMangaSecret(m));
+    const visibleAll = state.library.filter((m) => !isMangaSecret(m) && !isMangaBlockedNsfw(m, false));
     const usedCats = state.categories.filter((c) => c.id !== 0);
     const dlMangasCount = visibleAll.filter((m) => mangaDownloadCount(m.id) > 0).length;
 
@@ -1703,6 +1829,7 @@
         </select>
       </div>
       <div class="chips-row">
+        <button class="chip ${state.selectedTag ? 'active' : ''}" id="chipLibTag">${state.selectedTag ? '🏷️ ' + esc(state.selectedTag) + ' ×' : '🏷️ Tags'}</button>
         <button class="chip ${state.onlyDownloaded ? 'active' : ''}" id="chipOnlyDl">↓ Descargados (${dlMangasCount})</button>
         <button class="chip ${!state.onlyDownloaded && state.selectedCat === 'all' ? 'active' : ''}" data-cat="all">Todos (${visibleAll.length})</button>
         ${usedCats.map((c) => `<button class="chip ${!state.onlyDownloaded && String(state.selectedCat) === String(c.id) ? 'active' : ''}" data-cat="${c.id}">${esc(c.name)}</button>`).join('')}
@@ -1716,6 +1843,42 @@
     $('libSortSelect').addEventListener('change', (e) => {
       state.librarySort = e.target.value;
       drawLibraryGrid();
+    });
+    $('chipLibTag').addEventListener('click', () => {
+      if (state.selectedTag) {
+        state.selectedTag = '';
+        renderLibrary(false);
+        return;
+      }
+      // Recoger todos los tags de la biblioteca (respetando filtro +18)
+      const tagMap = new Map();
+      for (const m of visibleAll) {
+        const safe = Extras ? Extras.filterSafeTags(m.genre, shouldHideNsfw(false)) : (m.genre || []);
+        for (const t of safe) {
+          const k = Extras.normText(t);
+          const cur = tagMap.get(k) || { label: t, count: 0 };
+          cur.count += 1;
+          tagMap.set(k, cur);
+        }
+      }
+      const tagsSorted = Array.from(tagMap.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+      openAppSheet(`
+        <div class="sheet-title">
+          <span>Filtrar biblioteca por tag</span>
+          <button id="ltClose" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+        </div>
+        ${tagsSorted.length ? `<div class="manga-tags-wrap" style="padding:0">${tagsSorted.map((t) => `
+          <button class="tag-chip" data-pick-lib-tag="${esc(t.label)}" type="button">${esc(t.label)} (${t.count})</button>
+        `).join('')}</div>` : '<p style="color:var(--muted);font-size:13px">Abre un manga para cargar sus etiquetas o usa Explorar para buscar por tags.</p>'}
+      `);
+      $('ltClose').addEventListener('click', closeAppSheet);
+      appSheet.querySelectorAll('[data-pick-lib-tag]').forEach((b) => {
+        b.addEventListener('click', () => {
+          state.selectedTag = b.dataset.pickLibTag;
+          closeAppSheet();
+          renderLibrary(false);
+        });
+      });
     });
     $('chipOnlyDl').addEventListener('click', () => {
       state.onlyDownloaded = !state.onlyDownloaded;
@@ -1736,6 +1899,8 @@
     const q = state.librarySearch.trim().toLowerCase();
     let list = state.library.filter((m) => {
       if (isMangaSecret(m)) return false;
+      if (isMangaBlockedNsfw(m, false)) return false;
+      if (state.selectedTag && Extras && !Extras.mangaHasTag(m, state.selectedTag)) return false;
       if (q && !m.title.toLowerCase().includes(q)) return false;
       if (state.onlyDownloaded && mangaDownloadCount(m.id) === 0) return false;
       if (!state.onlyDownloaded && state.selectedCat !== 'all') {
@@ -2026,20 +2191,27 @@
     });
   }
 
-  // ---------------- EXPLORAR + BÚSQUEDA GLOBAL ----------------
-  async function runGlobalSearch(query) {
+  // ---------------- EXPLORAR + BÚSQUEDA GLOBAL + FILTRO POR TAGS ----------------
+  async function runGlobalSearch(query, tag = '') {
     state.globalSearchQuery = query;
+    state.globalSearchTag = tag;
     state.globalSearchResults = [];
-    if (!query) { renderExplore(); return; }
+    const effectiveQuery = [query, tag].filter(Boolean).join(' ').trim();
+    if (!effectiveQuery) { renderExplore(); return; }
 
-    const publicSources = state.sources.filter((s) => !Extras || !Extras.isSourceHidden(s.id));
-    mainContent.innerHTML = `<div class="empty-state"><div class="spinner"></div><p>Buscando "${esc(query)}" en ${publicSources.length} fuente(s)...</p></div>`;
+    const publicSources = state.sources.filter((s) => (!Extras || !Extras.isSourceHidden(s.id)) && !isSourceBlockedNsfw(s, false));
+    mainContent.innerHTML = `<div class="empty-state"><div class="spinner"></div><p>Buscando "${esc(effectiveQuery)}" en ${publicSources.length} fuente(s)...</p></div>`;
     const results = await Promise.all(publicSources.map(async (src) => {
       try {
         const data = await gql(M_SOURCE_MANGAS, {
-          input: { source: String(src.id), type: 'SEARCH', page: 1, query }
+          input: { source: String(src.id), type: 'SEARCH', page: 1, query: effectiveQuery }
         }, 12000);
-        const mangas = (data.fetchSourceManga && data.fetchSourceManga.mangas) || [];
+        let mangas = ((data.fetchSourceManga && data.fetchSourceManga.mangas) || [])
+          .filter((m) => !isMangaBlockedNsfw(m, false));
+        if (tag && Extras) {
+          const tagged = mangas.filter((m) => Extras.mangaHasTag(m, tag));
+          if (tagged.length) mangas = tagged;
+        }
         return { source: src, mangas: mangas.slice(0, 12) };
       } catch {
         return { source: src, mangas: [] };
@@ -2119,7 +2291,7 @@
       return;
     }
 
-    const publicSources = state.sources.filter((s) => !Extras || !Extras.isSourceHidden(s.id));
+    const publicSources = state.sources.filter((s) => (!Extras || !Extras.isSourceHidden(s.id)) && !isSourceBlockedNsfw(s, false));
     if (!publicSources.length) {
       mainContent.innerHTML = `
         <div class="empty-state">
@@ -2132,19 +2304,37 @@
       return;
     }
 
+    const safeQuickTags = Extras ? Extras.filterSafeTags(POPULAR_TAGS, shouldHideNsfw(false)) : POPULAR_TAGS;
     headerSub.classList.remove('hidden');
     headerSub.innerHTML = `
       <form id="globalSearchForm" class="search-box">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="#8e98a8"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
         <input id="globalSearchInput" type="search" placeholder="Buscar en todas las fuentes..." value="${esc(state.globalSearchQuery)}">
       </form>
+      <div class="chips-row">
+        ${state.globalSearchTag ? `<button class="chip active" data-gtag="">🏷️ ${esc(state.globalSearchTag)} ×</button>` : ''}
+        ${safeQuickTags.map((t) => `<button class="chip ${state.globalSearchTag === t ? 'active' : ''}" data-gtag="${esc(t)}">${esc(t)}</button>`).join('')}
+      </div>
     `;
     $('globalSearchForm').addEventListener('submit', (e) => {
       e.preventDefault();
-      runGlobalSearch($('globalSearchInput').value.trim());
+      runGlobalSearch($('globalSearchInput').value.trim(), state.globalSearchTag);
+    });
+    headerSub.querySelectorAll('[data-gtag]').forEach((ch) => {
+      ch.addEventListener('click', () => {
+        const nextTag = ch.dataset.gtag === state.globalSearchTag ? '' : ch.dataset.gtag;
+        state.globalSearchTag = nextTag;
+        if (nextTag || state.globalSearchQuery) {
+          renderExplore();
+          runGlobalSearch(state.globalSearchQuery, nextTag);
+        } else {
+          state.globalSearchResults = [];
+          renderExplore();
+        }
+      });
     });
 
-    if (state.globalSearchQuery && state.globalSearchResults.length) {
+    if ((state.globalSearchQuery || state.globalSearchTag) && state.globalSearchResults.length) {
       drawGlobalSearchResults();
       return;
     }
@@ -2187,8 +2377,11 @@
         <input id="srcSearchInput" type="search" placeholder="Buscar en ${esc(src.name)}..." value="${esc(state.sourceQuery)}">
       </form>
       <div class="chips-row">
-        <button class="chip ${state.sourceMode === 'POPULAR' ? 'active' : ''}" data-smode="POPULAR">Populares</button>
-        ${src.supportsLatest ? `<button class="chip ${state.sourceMode === 'LATEST' ? 'active' : ''}" data-smode="LATEST">Últimos</button>` : ''}
+        <button class="chip ${state.sourceMode === 'POPULAR' && !state.sourceTag ? 'active' : ''}" data-smode="POPULAR">Populares</button>
+        ${src.supportsLatest ? `<button class="chip ${state.sourceMode === 'LATEST' && !state.sourceTag ? 'active' : ''}" data-smode="LATEST">Últimos</button>` : ''}
+        ${(Extras ? Extras.filterSafeTags(POPULAR_TAGS, shouldHideNsfw(false)) : POPULAR_TAGS).slice(0, 12).map((t) =>
+          `<button class="chip ${state.sourceTag === t ? 'active' : ''}" data-stag="${esc(t)}">${esc(t)}</button>`
+        ).join('')}
       </div>
     `;
 
@@ -2196,15 +2389,28 @@
       e.preventDefault();
       const q = $('srcSearchInput').value.trim();
       state.sourceQuery = q;
+      state.sourceTag = '';
       state.sourceMode = q ? 'SEARCH' : 'POPULAR';
       state.sourcePage = 1;
       state.sourceMangas = [];
       loadSourcePage();
     });
-    headerSub.querySelectorAll('.chip').forEach((ch) => {
+    headerSub.querySelectorAll('.chip[data-smode]').forEach((ch) => {
       ch.addEventListener('click', () => {
         state.sourceMode = ch.dataset.smode;
         state.sourceQuery = '';
+        state.sourceTag = '';
+        state.sourcePage = 1;
+        state.sourceMangas = [];
+        renderSourceBrowser(true);
+      });
+    });
+    headerSub.querySelectorAll('.chip[data-stag]').forEach((ch) => {
+      ch.addEventListener('click', () => {
+        const nextTag = ch.dataset.stag === state.sourceTag ? '' : ch.dataset.stag;
+        state.sourceTag = nextTag;
+        state.sourceMode = nextTag ? 'SEARCH' : 'POPULAR';
+        state.sourceQuery = nextTag;
         state.sourcePage = 1;
         state.sourceMangas = [];
         renderSourceBrowser(true);
@@ -2222,8 +2428,9 @@
       if (state.sourceMode === 'SEARCH') input.query = state.sourceQuery;
       const data = await gql(M_SOURCE_MANGAS, { input });
       const res = data.fetchSourceManga || { mangas: [], hasNextPage: false };
+      const safeMangas = (res.mangas || []).filter((m) => !isMangaBlockedNsfw(m, false));
       state.sourceHasNext = !!res.hasNextPage;
-      state.sourceMangas = state.sourcePage === 1 ? res.mangas : state.sourceMangas.concat(res.mangas);
+      state.sourceMangas = state.sourcePage === 1 ? safeMangas : state.sourceMangas.concat(safeMangas);
       drawSourceGrid();
     } catch {
       setOfflineMode(true);
@@ -2419,7 +2626,15 @@
       </div>` : ''}
 
       <div class="settings-card">
-        <div style="font-size:14px;font-weight:700;margin-bottom:8px">Privacidad, copias y app</div>
+        <div style="font-size:14px;font-weight:700;margin-bottom:8px">Privacidad, filtro +18, copias y app</div>
+        <div class="setting-group">
+          <span class="setting-label">Filtro +18 (ocultar mangas, tags y fuentes +18 en búsquedas)</span>
+          <div class="seg-control two">
+            <button class="seg-btn ${!p.filterNsfw ? 'active' : ''}" data-pref-nsfw="0">Desactivado</button>
+            <button class="seg-btn ${p.filterNsfw ? 'active' : ''}" data-pref-nsfw="1">Activado (ocultar +18)</button>
+          </div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:5px">Oculta contenido +18 en búsquedas, Explorar, etiquetas y Extensiones. No afecta a tu Bóveda oculta.</div>
+        </div>
         <div style="display:flex;gap:8px;margin-bottom:10px">
           <button id="pinToggleBtn" class="secondary-btn" type="button" style="flex:1">
             ${Extras && Extras.hasPin() ? 'Quitar bloqueo PIN' : 'Activar bloqueo PIN (4 dígitos)'}
@@ -2466,6 +2681,16 @@
     });
     mainContent.querySelectorAll('[data-pref-dbl]').forEach((b) => {
       b.addEventListener('click', () => { state.prefs.doublePage = b.dataset.prefDbl === '1'; savePrefs(); renderSettings(); });
+    });
+    mainContent.querySelectorAll('[data-pref-nsfw]').forEach((b) => {
+      b.addEventListener('click', () => {
+        state.prefs.filterNsfw = b.dataset.prefNsfw === '1';
+        if (state.prefs.filterNsfw && state.selectedTag && Extras && Extras.isNsfwTag(state.selectedTag)) state.selectedTag = '';
+        if (state.prefs.filterNsfw && state.globalSearchTag && Extras && Extras.isNsfwTag(state.globalSearchTag)) state.globalSearchTag = '';
+        savePrefs();
+        showToast(state.prefs.filterNsfw ? 'Filtro +18 activado' : 'Filtro +18 desactivado');
+        renderSettings();
+      });
     });
     $('setDimSlider').addEventListener('input', (e) => {
       state.prefs.dim = parseInt(e.target.value, 10) || 0;
@@ -2633,7 +2858,7 @@
       }
       const others = state.sources.filter((s) =>
         String(s.id) !== String(manga.sourceId) &&
-        (state.vaultOpen ? true : (!Extras || !Extras.isSourceHidden(s.id)))
+        (state.vaultOpen ? true : ((!Extras || !Extras.isSourceHidden(s.id)) && !isSourceBlockedNsfw(s, false)))
       );
       const res = await Promise.all(others.map(async (src) => {
         try {
@@ -2847,6 +3072,15 @@
 
       ${m.description ? `<div id="detailDesc" class="manga-desc clamped">${esc(m.description)}</div>` : ''}
 
+      ${(() => {
+        const tags = Extras ? Extras.filterSafeTags(m.genre, shouldHideNsfw(inVault)) : (m.genre || []);
+        if (!tags.length) return '';
+        return `<div class="manga-tags-wrap">${tags.map((t) => {
+          const isAdult = Extras && Extras.isNsfwTag(t);
+          return `<button class="tag-chip ${isAdult ? 'nsfw' : ''}" data-open-tag="${esc(t)}" type="button"># ${esc(t)}</button>`;
+        }).join('')}</div>`;
+      })()}
+
       <div class="chapters-head">
         <strong>${filtered.length} cap.</strong>
         <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end">
@@ -2910,6 +3144,9 @@
 
     const desc = $('detailDesc');
     if (desc) desc.addEventListener('click', () => desc.classList.toggle('clamped'));
+    mangaView.querySelectorAll('[data-open-tag]').forEach((tb) => {
+      tb.addEventListener('click', () => openTagExplorer(tb.dataset.openTag, inVault));
+    });
     const resumeBtn = $('detailResumeBtn');
     if (resumeBtn && resume) resumeBtn.addEventListener('click', () => navigateHash(`#${readHashPrefix}/${m.id}/${resume.chap.id}`));
 

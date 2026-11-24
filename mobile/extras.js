@@ -382,6 +382,94 @@
     saveVault(defaultVault());
   }
 
+  // ---------------- Filtro +18 (NSFW) y utilidades de tags ----------------
+  function normText(s) {
+    return String(s || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+  }
+
+  const NSFW_TAG_EXACT = new Set([
+    '18+', '+18', 'nsfw', 'adult', 'adulto', 'adultos', 'hentai', 'erotica', 'erotico',
+    'smut', 'pornographic', 'pornografico', 'porn', 'porno', 'doujinshi', 'ecchi',
+    'mature', 'maduro', 'gore', 'sexual violence', 'violencia sexual', 'r18', 'r-18',
+    'nc-17', 'xxx', 'yaoi', 'yuri', 'bara', 'lolicon', 'shotacon', 'netorare', 'ntr',
+    'incest', 'incesto', 'bdsm', 'fetish', 'fetiche', 'borderline h', 'soft hentai',
+    'uncensored', 'sin censura', 'h-manga', 'milf', 'ahegao', 'futanari', 'orgy',
+    'erotic', 'contenido adulto', 'solo adultos', 'sexual content', 'suggestive'
+  ]);
+
+  const NSFW_TAG_SUBSTR = [
+    'hentai', '18+', '+18', 'r-18', 'r18', 'nsfw', 'porno', 'erotic', 'smut',
+    'doujin', 'netorare', 'lolicon', 'shotacon', 'bdsm', 'futanari', 'ahegao',
+    'sin censura', 'uncensored', 'sexual violence', 'violencia sexual', 'solo adultos'
+  ];
+
+  const NSFW_SOURCE_SUBSTR = [
+    'hentai', 'nhentai', 'hitomi', 'e-hentai', 'exhentai', 'nsfw', 'porno', 'porn',
+    'doujin', 'hanime', 'chochox', 'pururin', 'luscious', 'tsumino', 'manhwa18',
+    '18+', '+18', 'xxx', 'erotic', 'adult', 'toonily', 'manytoon', 'hiperdex',
+    'imhentai', 'asmhentai', 'hentainexus', 'hentaifox', 'tmohentai', 'vercomicsporno',
+    'omegascans', 'sex', 'fap'
+  ];
+
+  const NSFW_TITLE_REGEX = /(\[\s*18\+\s*\]|\(\s*18\+\s*\)|\b(hentai|nsfw|r-?18|xxx|porno|uncensored|sin censura)\b)/i;
+
+  function isNsfwTag(tag) {
+    const t = normText(tag);
+    if (!t) return false;
+    if (NSFW_TAG_EXACT.has(t)) return true;
+    return NSFW_TAG_SUBSTR.some((k) => t.includes(k));
+  }
+
+  function isNsfwFlag(val) {
+    if (val === true) return true;
+    if (typeof val === 'string') {
+      const u = val.trim().toUpperCase();
+      return u !== '' && u !== 'NONE' && u !== 'FALSE' && u !== 'SAFE';
+    }
+    return false;
+  }
+
+  function isNsfwSource(srcOrExt) {
+    if (!srcOrExt) return false;
+    if (isNsfwFlag(srcOrExt.contentWarning) || isNsfwFlag(srcOrExt.isNsfw)) return true;
+    const hay = normText((srcOrExt.name || '') + ' ' + (srcOrExt.displayName || '') + ' ' + (srcOrExt.pkgName || ''));
+    return NSFW_SOURCE_SUBSTR.some((k) => hay.includes(k));
+  }
+
+  function isNsfwManga(manga) {
+    if (!manga) return false;
+    if (NSFW_TITLE_REGEX.test(manga.title || '')) return true;
+    const genres = Array.isArray(manga.genre) ? manga.genre : [];
+    return genres.some((g) => isNsfwTag(g));
+  }
+
+  function filterSafeTags(tags, hideNsfw) {
+    const arr = Array.isArray(tags) ? tags : [];
+    const seen = new Set();
+    const out = [];
+    for (const raw of arr) {
+      const clean = String(raw || '').trim();
+      if (!clean) continue;
+      if (hideNsfw && isNsfwTag(clean)) continue;
+      const k = normText(clean);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(clean);
+    }
+    return out;
+  }
+
+  function mangaHasTag(manga, tag) {
+    if (!manga || !tag) return false;
+    const target = normText(tag);
+    const genres = Array.isArray(manga.genre) ? manga.genre : [];
+    return genres.some((g) => normText(g) === target || normText(g).includes(target));
+  }
+
   window.SuwayomiExtras = {
     hasPin,
     setPin,
@@ -418,6 +506,12 @@
     setVaultIncognito,
     getVaultChapterProgress,
     saveVaultChapterProgress,
-    clearVaultAll
+    clearVaultAll,
+    normText,
+    isNsfwTag,
+    isNsfwSource,
+    isNsfwManga,
+    filterSafeTags,
+    mangaHasTag
   };
 })();
