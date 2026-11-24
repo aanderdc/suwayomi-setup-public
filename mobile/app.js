@@ -735,20 +735,28 @@
   // --- RECIENTES ---
   let clearingHistory = false;
 
-  async function runClearHistory() {
+  async function runClearHistory(mangaId = 0, mangaTitle = '') {
     if (clearingHistory) return;
+    const isSingle = Number(mangaId) > 0;
     if (state.offline) {
-      if (confirm('Estás sin conexión con el PC. ¿Quieres limpiar solo la lista local de recientes en este móvil? (Para borrar también el historial del servidor, hazlo cuando el PC esté encendido).')) {
-        state.recent = [];
-        if (Offline) await Offline.saveSnapshot('recent', []);
-        showToast('Lista local de recientes vaciada');
+      const msgOff = isSingle
+        ? `Estás sin conexión con el PC. ¿Quieres quitar "${mangaTitle}" solo de la lista local de recientes en este móvil?`
+        : 'Estás sin conexión con el PC. ¿Quieres limpiar solo la lista local de recientes en este móvil? (Para borrar también el historial del servidor, hazlo cuando el PC esté encendido).';
+      if (confirm(msgOff)) {
+        state.recent = isSingle
+          ? state.recent.filter((ch) => !ch.manga || Number(ch.manga.id) !== Number(mangaId))
+          : [];
+        if (Offline) await Offline.saveSnapshot('recent', state.recent);
+        showToast(isSingle ? 'Quitado de recientes locales' : 'Lista local de recientes vaciada');
         if (state.tab === 'recent') renderRecent();
       }
       return;
     }
 
     const ok = confirm(
-      'Se borrará el historial de lectura en Suwayomi.\n\n' +
+      (isSingle
+        ? `Se quitará "${mangaTitle}" del historial de lectura en Suwayomi.\n\n`
+        : 'Se borrará TODO el historial de lectura en Suwayomi.\n\n') +
       '• Los capítulos siguen marcados como leídos.\n' +
       '• Se conservan la biblioteca, el progreso y las descargas.\n' +
       '• Se hace copia de seguridad automática de la base de datos.\n' +
@@ -758,15 +766,18 @@
     if (!ok) return;
 
     clearingHistory = true;
-    showToast('Borrando historial y reiniciando Suwayomi...');
+    showToast(isSingle ? `Quitando "${mangaTitle}" del historial...` : 'Borrando historial y reiniciando Suwayomi...');
     if (state.tab === 'recent') {
-      mainContent.innerHTML = '<div class="empty-state"><div class="spinner"></div><h3>Borrando historial...</h3><p>Suwayomi se está reiniciando (tarda unos segundos).</p></div>';
+      mainContent.innerHTML = `<div class="empty-state"><div class="spinner"></div><h3>${isSingle ? 'Quitando del historial...' : 'Borrando historial...'}</h3><p>Suwayomi se está reiniciando (tarda unos segundos).</p></div>`;
     }
 
     try {
       const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timer = ctrl ? setTimeout(() => ctrl.abort(), 45000) : null;
-      const res = await fetch('/movil/__action__/clear-history', {
+      const url = isSingle
+        ? `/movil/__action__/clear-history?mangaId=${encodeURIComponent(String(mangaId))}`
+        : '/movil/__action__/clear-history';
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'X-Suwayomi-Action': 'clear-history' },
         signal: ctrl ? ctrl.signal : undefined
@@ -777,9 +788,11 @@
       if (!res.ok || !data.ok) {
         throw new Error(data.error || `Error HTTP ${res.status}`);
       }
-      state.recent = [];
-      if (Offline) await Offline.saveSnapshot('recent', []);
-      showToast('Historial borrado correctamente');
+      state.recent = isSingle
+        ? state.recent.filter((ch) => !ch.manga || Number(ch.manga.id) !== Number(mangaId))
+        : [];
+      if (Offline) await Offline.saveSnapshot('recent', state.recent);
+      showToast(isSingle ? `"${mangaTitle}" quitado del historial` : 'Historial borrado correctamente');
     } catch (err) {
       showToast('No se pudo borrar el historial: ' + (err.message || 'error'));
     } finally {
@@ -792,9 +805,9 @@
   async function renderRecent() {
     headerTitle.textContent = 'Recientes';
     headerActions.innerHTML = `
-      <button id="recentClearBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px;color:#ff8690;border-color:rgba(255,77,90,0.35)">Borrar historial</button>
+      <button id="recentClearBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px;color:#ff8690;border-color:rgba(255,77,90,0.35)">Borrar todo</button>
     `;
-    $('recentClearBtn').addEventListener('click', runClearHistory);
+    $('recentClearBtn').addEventListener('click', () => runClearHistory(0, ''));
     headerSub.classList.add('hidden');
     mainContent.innerHTML = '<div class="spinner"></div>';
     await refreshDownloadsIndex();
@@ -842,6 +855,7 @@
             <div class="list-sub">${pageTxt} · ${formatDate(ch.lastReadAt)}</div>
           </div>
           <button class="list-cta" data-read-manga="${ch.manga.id}" data-read-chap="${ch.id}" type="button">${locked ? 'Sin red' : 'Leer'}</button>
+          <button class="list-del-btn" data-del-hist-manga="${ch.manga.id}" data-del-hist-title="${esc(ch.manga.title)}" type="button" title="Quitar este manga del historial" aria-label="Quitar del historial">×</button>
         </div>
       `;
     }).join('')}</div>`;
@@ -849,6 +863,12 @@
     attachCoverFallbacks(mainContent);
     mainContent.querySelectorAll('.list-card').forEach((card) => {
       card.addEventListener('click', (e) => {
+        const delBtn = e.target.closest('.list-del-btn');
+        if (delBtn) {
+          e.stopPropagation();
+          runClearHistory(Number(delBtn.dataset.delHistManga), delBtn.dataset.delHistTitle || '');
+          return;
+        }
         const btn = e.target.closest('.list-cta');
         if (btn) {
           e.stopPropagation();
@@ -1167,7 +1187,7 @@
     const instBtn = $('settingsInstallBtn');
     if (instBtn) instBtn.addEventListener('click', triggerInstallApp);
     const clrHistBtn = $('settingsClearHistBtn');
-    if (clrHistBtn) clrHistBtn.addEventListener('click', runClearHistory);
+    if (clrHistBtn) clrHistBtn.addEventListener('click', () => runClearHistory(0, ''));
   }
 
   // ---------------- Detalle de Manga ----------------

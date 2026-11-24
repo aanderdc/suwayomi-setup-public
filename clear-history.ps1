@@ -33,9 +33,11 @@
 param(
     [string]$InstallDir,
     [string]$DataDir = (Join-Path $env:LOCALAPPDATA "Tachidesk"),
+    [int]$MangaId = 0,
     [switch]$Force
 )
 $ErrorActionPreference = "Stop"
+if ($MangaId -lt 0) { throw "MangaId debe ser un numero positivo." }
 
 # --- Localizar la carpeta del servidor ---------------------------------------
 if (-not $InstallDir) {
@@ -91,9 +93,15 @@ function Invoke-H2([string]$sql, [switch]$ReadOnly) {
     return $out
 }
 
+$whereSql = if ($MangaId -gt 0) { "MANGA = $MangaId AND LAST_READ_AT > 0" } else { "LAST_READ_AT > 0" }
+
 Write-Host ""
-Write-Host "Capitulos con historial ahora mismo:"
-Invoke-H2 "SELECT COUNT(*) FROM CHAPTER WHERE LAST_READ_AT > 0" -ReadOnly
+if ($MangaId -gt 0) {
+    Write-Host "Capitulos con historial ahora mismo (manga $MangaId):"
+} else {
+    Write-Host "Capitulos con historial ahora mismo:"
+}
+Invoke-H2 "SELECT COUNT(*) FROM CHAPTER WHERE $whereSql" -ReadOnly
 
 # --- Copia de seguridad -------------------------------------------------------
 $stamp  = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -103,11 +111,11 @@ Write-Host ""
 Write-Host "Copia de seguridad: $backup"
 
 # --- Borrar el historial ------------------------------------------------------
-Invoke-H2 "UPDATE CHAPTER SET LAST_READ_AT = 0 WHERE LAST_READ_AT > 0" | Out-Null
+Invoke-H2 "UPDATE CHAPTER SET LAST_READ_AT = 0 WHERE $whereSql" | Out-Null
 
 Write-Host ""
 Write-Host "Capitulos con historial despues (debe ser 0):"
-Invoke-H2 "SELECT COUNT(*) FROM CHAPTER WHERE LAST_READ_AT > 0" -ReadOnly
+Invoke-H2 "SELECT COUNT(*) FROM CHAPTER WHERE $whereSql" -ReadOnly
 
 Write-Host ""
 Write-Host "Listo. Arranca Suwayomi y recarga la pagina Historial (F5)."

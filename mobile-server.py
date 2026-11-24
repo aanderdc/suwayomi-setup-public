@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import parse_qs, urlsplit
 
 PORT = int(os.environ.get("SUWAYOMI_MOBILE_PORT", "4568"))
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -79,11 +80,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json(403, {"ok": False, "error": "Forbidden"})
             return
 
+        qs = parse_qs(urlsplit(self.path).query)
+        manga_args = []
+        if "mangaId" in qs and qs["mangaId"]:
+            val = qs["mangaId"][0]
+            if not val.isdigit() or int(val) <= 0:
+                self._send_json(400, {"ok": False, "error": "Invalid mangaId"})
+                return
+            manga_args = ["--manga-id", val]
+
         with ACTION_LOCK:
             script = os.path.join(REPO_ROOT, "clear-history.sh")
             try:
                 proc = subprocess.run(
-                    ["bash", script, "--force"],
+                    ["bash", script, "--force", *manga_args],
                     cwd=REPO_ROOT,
                     capture_output=True,
                     text=True,

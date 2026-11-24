@@ -101,7 +101,23 @@ public static class MobileStaticServer {
         }
     }
 
-    private static void HandleClearHistory(NetworkStream ns, string fullRepo) {
+    private static int ParseQueryMangaId(string query) {
+        if (string.IsNullOrEmpty(query)) return 0;
+        foreach (string pair in query.Split('&')) {
+            int eq = pair.IndexOf('=');
+            if (eq <= 0) continue;
+            string k = pair.Substring(0, eq);
+            string v = pair.Substring(eq + 1);
+            if (string.Equals(k, "mangaId", StringComparison.OrdinalIgnoreCase)) {
+                int id;
+                if (int.TryParse(v, out id) && id > 0) return id;
+                return -1;
+            }
+        }
+        return 0;
+    }
+
+    private static void HandleClearHistory(NetworkStream ns, string fullRepo, int mangaId) {
         string script = Path.Combine(fullRepo, "clear-history.ps1");
         if (!File.Exists(script)) {
             SendResponse(ns, 500, "application/json; charset=utf-8",
@@ -111,9 +127,10 @@ public static class MobileStaticServer {
 
         lock (ActionLock) {
             try {
+                string extra = mangaId > 0 ? (" -MangaId " + mangaId) : "";
                 ProcessStartInfo psi = new ProcessStartInfo();
                 psi.FileName = "powershell.exe";
-                psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -Force";
+                psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -Force" + extra;
                 psi.WorkingDirectory = fullRepo;
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
@@ -173,8 +190,12 @@ public static class MobileStaticServer {
                     if (parts.Length < 2) return;
                     string method = parts[0];
                     string rawPath = parts[1];
+                    string queryStr = "";
                     int qIdx = rawPath.IndexOf('?');
-                    if (qIdx >= 0) rawPath = rawPath.Substring(0, qIdx);
+                    if (qIdx >= 0) {
+                        queryStr = rawPath.Substring(qIdx + 1);
+                        rawPath = rawPath.Substring(0, qIdx);
+                    }
                     rawPath = Uri.UnescapeDataString(rawPath);
 
                     if (rawPath.StartsWith("/movil/", StringComparison.OrdinalIgnoreCase)) {
@@ -183,7 +204,7 @@ public static class MobileStaticServer {
                         rawPath = "/";
                     }
 
-                    // Accion privada: borrar historial de lectura
+                    // Accion privada: borrar historial de lectura (completo o de un manga)
                     if (string.Equals(rawPath, "/__action__/clear-history", StringComparison.OrdinalIgnoreCase)) {
                         if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) ||
                             !string.Equals(actionHeader, "clear-history", StringComparison.OrdinalIgnoreCase)) {
@@ -191,7 +212,13 @@ public static class MobileStaticServer {
                                 Encoding.UTF8.GetBytes("{\"ok\":false,\"error\":\"Forbidden\"}"), false);
                             return;
                         }
-                        HandleClearHistory(ns, fullRepo);
+                        int mangaId = ParseQueryMangaId(queryStr);
+                        if (mangaId < 0) {
+                            SendResponse(ns, 400, "application/json; charset=utf-8",
+                                Encoding.UTF8.GetBytes("{\"ok\":false,\"error\":\"Invalid mangaId\"}"), false);
+                            return;
+                        }
+                        HandleClearHistory(ns, fullRepo, mangaId);
                         return;
                     }
 
@@ -215,7 +242,7 @@ public static class MobileStaticServer {
     }
 
     private static void SendResponse(NetworkStream ns, int status, string contentType, byte[] body, bool headOnly) {
-        string reason = status == 200 ? "OK" : (status == 403 ? "Forbidden" : (status == 404 ? "Not Found" : "Internal Server Error"));
+        string reason = status == 200 ? "OK" : (status == 400 ? "Bad Request" : (status == 403 ? "Forbidden" : (status == 404 ? "Not Found" : "Internal Server Error")));
         string header = "HTTP/1.1 " + status + " " + reason + "\r\n" +
                         "Content-Type: " + contentType + "\r\n" +
                         "Content-Length: " + body.Length + "\r\n" +

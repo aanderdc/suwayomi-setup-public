@@ -23,12 +23,14 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 source "$ROOT/common.sh"
 
 INSTALL_DIR=""
+MANGA_ID=""
 FORCE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --install-dir) INSTALL_DIR="$2"; shift 2 ;;
         --data-dir)    DATA_DIR="$2"; shift 2 ;;
+        --manga-id)    MANGA_ID="$2"; shift 2 ;;
         --force)       FORCE=1; shift ;;
         -h|--help)
             sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
@@ -36,6 +38,12 @@ while [ $# -gt 0 ]; do
         *) echo "Opción desconocida: $1" >&2; exit 1 ;;
     esac
 done
+
+if [ -n "$MANGA_ID" ]; then
+    case "$MANGA_ID" in
+        ''|*[!0-9]*|0) echo "ID de manga no válido: $MANGA_ID" >&2; exit 1 ;;
+    esac
+fi
 
 # --- Localizar la carpeta del servidor --------------------------------------
 if [ -z "$INSTALL_DIR" ]; then
@@ -84,9 +92,14 @@ invoke_h2() {  # invoke_h2 "SQL" [ro]
     printf '%s\n' "$out"
 }
 
+WHERE_SQL="LAST_READ_AT > 0"
+if [ -n "$MANGA_ID" ]; then
+    WHERE_SQL="MANGA = $MANGA_ID AND LAST_READ_AT > 0"
+fi
+
 echo
 echo "Capítulos con historial ahora mismo:"
-invoke_h2 "SELECT COUNT(*) FROM CHAPTER WHERE LAST_READ_AT > 0" ro
+invoke_h2 "SELECT COUNT(*) FROM CHAPTER WHERE $WHERE_SQL" ro
 
 # --- Copia de seguridad -----------------------------------------------------
 BACKUP="$DATA_DIR/database.mv.db.bak-$(date +%Y%m%d-%H%M%S)"
@@ -95,11 +108,11 @@ echo
 echo "Copia de seguridad: $BACKUP"
 
 # --- Borrar el historial ----------------------------------------------------
-invoke_h2 "UPDATE CHAPTER SET LAST_READ_AT = 0 WHERE LAST_READ_AT > 0" >/dev/null
+invoke_h2 "UPDATE CHAPTER SET LAST_READ_AT = 0 WHERE $WHERE_SQL" >/dev/null
 
 echo
 echo "Capítulos con historial después (debe ser 0):"
-invoke_h2 "SELECT COUNT(*) FROM CHAPTER WHERE LAST_READ_AT > 0" ro
+invoke_h2 "SELECT COUNT(*) FROM CHAPTER WHERE $WHERE_SQL" ro
 
 echo
 echo "Listo. Arranca Suwayomi y recarga la página Historial (Cmd+R)."
