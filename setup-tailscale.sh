@@ -60,6 +60,13 @@ copy_url() {
     fi
 }
 
+sync_mobile_webapp() {
+    if [ -d "$ROOT/mobile" ]; then
+        mkdir -p "$DATA_DIR/webUI/movil"
+        cp -f "$ROOT/mobile/"* "$DATA_DIR/webUI/movil/" 2>/dev/null || true
+    fi
+}
+
 run_and_open_url() {
     local ts="$1" prompt_msg="$2" check_fn="$3"
     shift 3
@@ -156,17 +163,18 @@ Pulsa OK cuando lo hayas activado." \
         ui_msg "Acceso activado, pero no pude leer el nombre de tu equipo en Tailscale. Revisa 'tailscale status'." caution
         return
     fi
-    url="https://$dns/"
+    sync_mobile_webapp
+    url="https://$dns/movil/"
     copy_url "$url"
 
-    ui_msg "Acceso privado activado (enlace copiado al portapapeles):
+    ui_msg "Acceso privado activado (enlace del lector móvil copiado al portapapeles):
 
 $url
 
 En tu móvil:
 1. Instala Tailscale y entra con la MISMA cuenta.
 2. Activa la conexión VPN.
-3. Abre el enlace en Chrome o Safari (funciona con WiFi o datos).
+3. Abre el enlace en Chrome o Safari (funciona con WiFi o datos) y pulsa 'Añadir a pantalla de inicio'.
 
 Recuerda dejar el Mac encendido y Suwayomi en marcha." note
 }
@@ -198,10 +206,11 @@ while true; do
         status="ATENCIÓN: Funnel público activo ⚠️"
         items=("$L_FIX" "$L_OFF")
     elif [ -n "$TS" ] && ts_serve_active "$TS"; then
+        sync_mobile_webapp
         DNS="$(ts_dns_name "$TS")"
-        URL="https://$DNS/"
+        URL="https://$DNS/movil/"
         status="ACTIVO ✅
-Enlace privado: $URL"
+Enlace lector móvil: $URL"
         items=("$L_COPY" "$L_OPEN" "$L_OFF")
     else
         status="NO ACTIVADO ⚪️

@@ -21,6 +21,7 @@ instalar, encender, apagar y abrir el lector en el navegador.
 | `clear-history.ps1` | `clear-history.sh` | Borra el historial de lectura (con copia de seguridad previa). |
 | `verificar-extensiones.ps1` | — | Comprueba en VirusTotal las extensiones instaladas (solo Windows; necesita una API key gratuita). |
 | `setup-tailscale.ps1` | `setup-tailscale.sh` | Asistente visual para usar Suwayomi desde el móvil con Tailscale (acceso privado HTTPS, código QR en Windows y control de suspensión). |
+| `mobile/` | `mobile/` | Lector web móvil estilo app (PWA, ruta `/movil/`): scroll vertical continuo o paginado, barra inferior, filtro nocturno y sincronización con Suwayomi. |
 | — | `common.sh` | Configuración compartida de los scripts de macOS. |
 | — | `crear-app.sh` | Opcional: crea `Suwayomi.app` para abrir el panel sin ventana de Terminal. |
 
@@ -56,7 +57,9 @@ Si quieres leer desde tu móvil Android o iPhone (con WiFi o con datos móviles)
 1. En el panel de control, pulsa **Acceso desde el móvil (Tailscale)**.
 2. Pulsa **Activar acceso desde el móvil** y sigue los avisos en pantalla (instala Tailscale, inicia sesión y activa HTTPS privado/Serve; nunca se activa Funnel).
 3. En tu móvil, instala la app **Tailscale**, entra con la **misma cuenta** y activa la conexión VPN.
-4. Escanea el **código QR** que muestra el asistente (en Windows) o abre el enlace privado `https://...ts.net/` que se copia al portapapeles.
+4. Escanea el **código QR** que muestra el asistente (en Windows) o abre el enlace privado `https://...ts.net/movil/` que se copia al portapapeles.
+
+La ruta `/movil/` abre un **lector móvil estilo app (PWA)** diseñado para pantalla pequeña (sin instalar APKs): cuadrícula de portadas con barra inferior, modo vertical continuo sin huecos o paginado deslizando, toque central para ocultar/mostrar controles, filtro nocturno y progreso sincronizado con Suwayomi. Puedes añadirlo a la pantalla de inicio del móvil para leer a pantalla completa, y desde *Ajustes* abrir el Suwayomi completo (`/`) cuando quieras gestionar extensiones.
 
 En Windows, el propio asistente incluye un botón para **evitar que el PC se suspenda cuando está enchufado** (y restaurar tu ajuste anterior con un clic), ya que si el PC se suspende se corta la conexión desde el móvil.
 

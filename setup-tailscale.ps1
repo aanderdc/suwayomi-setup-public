@@ -303,15 +303,28 @@ if (-not ('LocalQrCode' -as [type])) {
 }
 
 # ---------------- Configuracion ----------------
+$Root        = $PSScriptRoot
 $Port        = 4567
 $DataDir     = Join-Path $env:LOCALAPPDATA 'Tachidesk'
 $InstallRoot = Join-Path $env:USERPROFILE 'Suwayomi'
 $SleepBackup = Join-Path $DataDir 'tailscale-sleep-backup.txt'
 
-$script:Busy        = $false
-$script:CancelFlow  = $false
-$script:LastQrUrl   = ''
-$script:CurrentUrl  = ''
+$script:Busy         = $false
+$script:CancelFlow   = $false
+$script:LastQrUrl    = ''
+$script:CurrentUrl   = ''
+$script:UseMobileUi  = $true
+
+function Sync-MobileWebApp {
+    $src = Join-Path $Root 'mobile'
+    if (-not (Test-Path $src)) { return $false }
+    try {
+        $dest = Join-Path $DataDir 'webUI\movil'
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        Copy-Item -Path (Join-Path $src '*') -Destination $dest -Force
+        return $true
+    } catch { return $false }
+}
 
 # ---------------- Utilidades ----------------
 function Find-Tailscale {
@@ -357,6 +370,7 @@ function Get-SuwayomiLauncher {
 }
 
 function Start-SuwayomiServer {
+    Sync-MobileWebApp | Out-Null
     $launcher = Get-SuwayomiLauncher
     if (-not $launcher) { return $false }
     $dir = $launcher.DirectoryName
@@ -368,7 +382,15 @@ function Start-SuwayomiServer {
         if ($cmd) { $java = $cmd.Source }
     }
     if (-not $java) { return $false }
-    Start-Process -FilePath $java -ArgumentList '-jar', 'Suwayomi-Launcher.jar' -WorkingDirectory $dir -WindowStyle Hidden
+    $serverJar = Join-Path $dir 'bin\Suwayomi-Server.jar'
+    if (Test-Path $serverJar) {
+        Start-Process -FilePath $java -ArgumentList `
+            '-Dsuwayomi.tachidesk.config.server.initialOpenInBrowserEnabled=false', `
+            '-Dsuwayomi.tachidesk.config.server.systemTrayEnabled=false', `
+            '-jar', 'bin\Suwayomi-Server.jar' -WorkingDirectory $dir -WindowStyle Hidden
+    } else {
+        Start-Process -FilePath $java -ArgumentList '--add-exports=java.desktop/sun.awt=ALL-UNNAMED', '-jar', 'Suwayomi-Launcher.jar' -WorkingDirectory $dir -WindowStyle Hidden
+    }
     return $true
 }
 
@@ -448,6 +470,8 @@ function Get-MobileState {
     }
 
     if (-not $serveUrl -and $dns) { $serveUrl = "https://$dns/" }
+    $mobileUrl = if ($serveUrl) { ($serveUrl.TrimEnd('/')) + '/movil/' } else { '' }
+    $activeUrl = if ($serveActive) { if ($script:UseMobileUi) { $mobileUrl } else { $serveUrl } } else { '' }
 
     return [pscustomobject]@{
         TailscaleExe = $ts
@@ -458,7 +482,8 @@ function Get-MobileState {
         OnlinePeers  = $onlinePeers
         ServeActive  = $serveActive
         FunnelActive = $funnelActive
-        Url          = if ($serveActive) { $serveUrl } else { '' }
+        BaseUrl      = if ($serveActive) { $serveUrl } else { '' }
+        Url          = $activeUrl
         SuwayomiUp   = (Test-LocalPort $Port)
         SuwayomiInst = [bool](Get-SuwayomiLauncher)
         AcSleepMin   = (Get-AcSleepMinutes)
@@ -585,11 +610,23 @@ $pnlPhone.Controls.Add($lblQrPlaceholder)
 $lblQrPlaceholder.BringToFront()
 
 $lblUrlCap = New-Object System.Windows.Forms.Label
-$lblUrlCap.Location = New-Object System.Drawing.Point(194, 12)
-$lblUrlCap.Size = New-Object System.Drawing.Size(314, 18)
+$lblUrlCap.Location = New-Object System.Drawing.Point(194, 10)
+$lblUrlCap.Size = New-Object System.Drawing.Size(145, 18)
 $lblUrlCap.Font = New-Object System.Drawing.Font('Segoe UI', 8.5, [System.Drawing.FontStyle]::Bold)
 $lblUrlCap.Text = 'Tu enlace privado:'
 $pnlPhone.Controls.Add($lblUrlCap)
+
+$chkMobileUi = New-Object System.Windows.Forms.CheckBox
+$chkMobileUi.Location = New-Object System.Drawing.Point(344, 9)
+$chkMobileUi.Size = New-Object System.Drawing.Size(166, 20)
+$chkMobileUi.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$chkMobileUi.Text = 'Lector movil (estilo app)'
+$chkMobileUi.Checked = $true
+$pnlPhone.Controls.Add($chkMobileUi)
+$chkMobileUi.Add_CheckedChanged({
+    $script:UseMobileUi = $chkMobileUi.Checked
+    Update-Ui
+})
 
 $txtUrl = New-Object System.Windows.Forms.TextBox
 $txtUrl.Location = New-Object System.Drawing.Point(194, 32)
@@ -1100,10 +1137,11 @@ $timer.Add_Tick({
 })
 
 $form.Add_Shown({
+    Sync-MobileWebApp | Out-Null
     Update-Ui
     $st = Get-MobileState
     if ($st.ServeActive) {
-        Write-Log 'Acceso privado activo. Escanea el QR desde tu movil con Tailscale conectado.'
+        Write-Log 'Acceso privado activo. Escanea el QR para abrir el lector movil (estilo app).'
     } else {
         Write-Log 'Pulsa "Activar acceso desde el movil" para configurarlo paso a paso.'
     }

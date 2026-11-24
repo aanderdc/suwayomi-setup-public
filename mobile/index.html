@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Suwayomi Móvil</title>
+  <link rel="manifest" href="/movil/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="/movil/icon.svg">
+  <link rel="apple-touch-icon" href="/movil/icon.svg">
+  <link rel="stylesheet" href="/movil/styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Cabecera principal (pestañas) -->
+    <header id="topHeader" class="top-header">
+      <div class="header-row">
+        <h1 id="headerTitle" class="header-title">Biblioteca</h1>
+        <div id="headerActions" class="header-actions"></div>
+      </div>
+      <div id="headerSub" class="header-sub hidden"></div>
+    </header>
+
+    <!-- Contenido principal de pestañas -->
+    <main id="mainContent" class="main-content"></main>
+
+    <!-- Barra de navegación inferior estilo app -->
+    <nav id="bottomNav" class="bottom-nav" aria-label="Navegación principal">
+      <button class="nav-btn active" data-tab="library" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6zm10 0a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2V6z"/></svg>
+        <span>Biblioteca</span>
+      </button>
+      <button class="nav-btn" data-tab="recent" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 10.4 3.2 1.9-.9 1.5L11 13.3V7h2z"/></svg>
+        <span>Recientes</span>
+      </button>
+      <button class="nav-btn" data-tab="explore" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm3.9 6.1-2.1 5.7-5.7 2.1 2.1-5.7 5.7-2.1z"/></svg>
+        <span>Explorar</span>
+      </button>
+      <button class="nav-btn" data-tab="settings" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.8 7.8 0 0 0 0-2l2-1.5-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4L4.6 11a7.8 7.8 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7.4 7.4 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 1.7-1l2.4 1 2-3.4-2-1.5zM12 15.2A3.2 3.2 0 1 1 15.2 12 3.2 3.2 0 0 1 12 15.2z"/></svg>
+        <span>Ajustes</span>
+      </button>
+    </nav>
+
+    <!-- Vista detalle de manga -->
+    <section id="mangaView" class="overlay-view hidden" aria-label="Detalle del manga"></section>
+
+    <!-- Vista lector a pantalla completa estilo Manga Dogs -->
+    <section id="readerView" class="reader-view hidden" aria-label="Lector de manga">
+      <div id="readerDimmer" class="reader-dimmer"></div>
+
+      <div id="readerStage" class="reader-stage"></div>
+
+      <!-- Indicador discreto de página (esquina inferior) -->
+      <div id="readerMiniStatus" class="reader-mini-status"></div>
+
+      <!-- Barra superior flotante -->
+      <div id="readerTopBar" class="reader-top-bar">
+        <button id="readerBackBtn" class="icon-btn" type="button" aria-label="Volver">
+          <svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg>
+        </button>
+        <div class="reader-titles">
+          <div id="readerMangaTitle" class="reader-manga-title"></div>
+          <div id="readerChapterTitle" class="reader-chapter-title"></div>
+        </div>
+        <button id="readerChaptersBtn" class="icon-btn" type="button" aria-label="Lista de capítulos">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+        </button>
+        <button id="readerSettingsBtn" class="icon-btn" type="button" aria-label="Opciones de lectura">
+          <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+        </button>
+      </div>
+
+      <!-- Barra inferior flotante -->
+      <div id="readerBottomBar" class="reader-bottom-bar">
+        <div class="reader-slider-row">
+          <span id="readerPageNow" class="reader-page-num">1</span>
+          <input id="readerSlider" class="reader-slider" type="range" min="1" max="1" value="1" aria-label="Página actual">
+          <span id="readerPageTotal" class="reader-page-num">1</span>
+        </div>
+        <div class="reader-nav-row">
+          <button id="readerPrevChap" class="reader-pill-btn" type="button">‹ Cap. anterior</button>
+          <button id="readerModeQuick" class="reader-pill-btn accent" type="button">Vertical</button>
+          <button id="readerNextChap" class="reader-pill-btn" type="button">Cap. siguiente ›</button>
+        </div>
+      </div>
+
+      <!-- Panel inferior de ajustes del lector -->
+      <div id="readerSheetBackdrop" class="sheet-backdrop hidden"></div>
+      <div id="readerSheet" class="bottom-sheet hidden"></div>
+    </section>
+
+    <!-- Toast de notificaciones -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="/movil/app.js"></script>
+</body>
+</html>

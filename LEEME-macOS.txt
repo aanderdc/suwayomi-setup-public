@@ -79,8 +79,9 @@ puertos del router ni publicarla en Internet:
    NO actives Funnel).
 3. En tu movil, instala la app "Tailscale", entra con
    la MISMA cuenta y activa la conexion VPN.
-4. Abre el enlace privado (https://...ts.net/) que se
-   copia al portapapeles.
+4. Abre el enlace privado (https://...ts.net/movil/) que
+   se copia al portapapeles para usar el lector movil
+   estilo app, y elige "Anadir a pantalla de inicio".
 
 Recuerda dejar el Mac encendido, sin suspender y con
 Suwayomi en marcha mientras lees desde el movil.

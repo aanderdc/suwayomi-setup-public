@@ -43,6 +43,16 @@ function Get-SuwayomiProcesses {
         Where-Object { $_.Name -match 'java' -and $_.CommandLine -match 'Suwayomi' }
 }
 
+function Sync-MobileWebApp {
+    $src = Join-Path $Root 'mobile'
+    if (-not (Test-Path $src)) { return }
+    try {
+        $dest = Join-Path $DataDir 'webUI\movil'
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        Copy-Item -Path (Join-Path $src '*') -Destination $dest -Force
+    } catch { }
+}
+
 function Run-Visible($scriptName, $scriptArgs = '') {
     $path = Join-Path $Root $scriptName
     if (-not (Test-Path $path)) { Msg "No se encuentra $scriptName en la carpeta." 'Error'; return }
@@ -164,6 +174,7 @@ $form.Controls.Add($txtLog)
 # ---------------- Acciones ----------------
 $btnStart.Add_Click({
     if (-not $script:Launcher) { Msg 'Suwayomi no esta instalado. Pulsa "Instalar Suwayomi".' 'Warning'; return }
+    Sync-MobileWebApp
     $dir = $script:Launcher.DirectoryName
     $java = $null
     $jre = Join-Path $dir 'jre\bin\javaw.exe'

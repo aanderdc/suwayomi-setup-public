@@ -1,0 +1,19 @@
+{
+  "name": "Suwayomi Móvil",
+  "short_name": "Suwayomi",
+  "description": "Lector de manga móvil para tu servidor privado de Suwayomi",
+  "start_url": "/movil/",
+  "scope": "/movil/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b0d12",
+  "theme_color": "#0b0d12",
+  "icons": [
+    {
+      "src": "/movil/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
