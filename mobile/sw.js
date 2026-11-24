@@ -1,11 +1,11 @@
-const CACHE_NAME = 'suwayomi-movil-v4';
+const CACHE_NAME = 'suwayomi-movil-v5';
 const MEDIA_CACHE = 'suwayomi-offline-media-v1';
 const SHELL_URLS = [
   '/movil/',
   '/movil/index.html',
-  '/movil/styles.css?v=4',
-  '/movil/offline.js?v=4',
-  '/movil/app.js?v=4',
+  '/movil/styles.css?v=5',
+  '/movil/offline.js?v=5',
+  '/movil/app.js?v=5',
   '/movil/manifest.json',
   '/movil/icon-192.png',
   '/movil/icon-512.png',

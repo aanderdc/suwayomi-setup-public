@@ -733,9 +733,68 @@
   }
 
   // --- RECIENTES ---
+  let clearingHistory = false;
+
+  async function runClearHistory() {
+    if (clearingHistory) return;
+    if (state.offline) {
+      if (confirm('Estás sin conexión con el PC. ¿Quieres limpiar solo la lista local de recientes en este móvil? (Para borrar también el historial del servidor, hazlo cuando el PC esté encendido).')) {
+        state.recent = [];
+        if (Offline) await Offline.saveSnapshot('recent', []);
+        showToast('Lista local de recientes vaciada');
+        if (state.tab === 'recent') renderRecent();
+      }
+      return;
+    }
+
+    const ok = confirm(
+      'Se borrará el historial de lectura en Suwayomi.\n\n' +
+      '• Los capítulos siguen marcados como leídos.\n' +
+      '• Se conservan la biblioteca, el progreso y las descargas.\n' +
+      '• Se hace copia de seguridad automática de la base de datos.\n' +
+      '• Suwayomi se reiniciará unos segundos.\n\n' +
+      '¿Continuar?'
+    );
+    if (!ok) return;
+
+    clearingHistory = true;
+    showToast('Borrando historial y reiniciando Suwayomi...');
+    if (state.tab === 'recent') {
+      mainContent.innerHTML = '<div class="empty-state"><div class="spinner"></div><h3>Borrando historial...</h3><p>Suwayomi se está reiniciando (tarda unos segundos).</p></div>';
+    }
+
+    try {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), 45000) : null;
+      const res = await fetch('/movil/__action__/clear-history', {
+        method: 'POST',
+        headers: { 'X-Suwayomi-Action': 'clear-history' },
+        signal: ctrl ? ctrl.signal : undefined
+      });
+      if (timer) clearTimeout(timer);
+      let data = {};
+      try { data = await res.json(); } catch { }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || `Error HTTP ${res.status}`);
+      }
+      state.recent = [];
+      if (Offline) await Offline.saveSnapshot('recent', []);
+      showToast('Historial borrado correctamente');
+    } catch (err) {
+      showToast('No se pudo borrar el historial: ' + (err.message || 'error'));
+    } finally {
+      clearingHistory = false;
+      if (state.tab === 'recent') renderRecent();
+      else if (state.tab === 'settings') renderSettings();
+    }
+  }
+
   async function renderRecent() {
     headerTitle.textContent = 'Recientes';
-    headerActions.innerHTML = '';
+    headerActions.innerHTML = `
+      <button id="recentClearBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px;color:#ff8690;border-color:rgba(255,77,90,0.35)">Borrar historial</button>
+    `;
+    $('recentClearBtn').addEventListener('click', runClearHistory);
     headerSub.classList.add('hidden');
     mainContent.innerHTML = '<div class="spinner"></div>';
     await refreshDownloadsIndex();
@@ -1062,9 +1121,12 @@
              <button id="settingsInstallBtn" class="primary-btn" type="button" style="margin-bottom:10px">
                ${deferredInstallPrompt ? 'Instalar app ahora' : 'Cómo instalar en pantalla de inicio'}
              </button>`}
-        <a href="/" class="secondary-btn" style="display:block;text-align:center;text-decoration:none">
+        <a href="/" class="secondary-btn" style="display:block;text-align:center;text-decoration:none;margin-bottom:10px">
           Abrir Suwayomi completo (instalar extensiones)
         </a>
+        <button id="settingsClearHistBtn" class="secondary-btn" type="button" style="width:100%;color:#ff8690;border-color:rgba(255,77,90,0.35)">
+          Borrar historial de lectura
+        </button>
       </div>
     `;
 
@@ -1104,6 +1166,8 @@
     });
     const instBtn = $('settingsInstallBtn');
     if (instBtn) instBtn.addEventListener('click', triggerInstallApp);
+    const clrHistBtn = $('settingsClearHistBtn');
+    if (clrHistBtn) clrHistBtn.addEventListener('click', runClearHistory);
   }
 
   // ---------------- Detalle de Manga ----------------

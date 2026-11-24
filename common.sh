@@ -19,18 +19,24 @@ server_up() {
 
 # Arranca/detiene el servidor local ligero de la interfaz móvil (puerto 4568)
 start_mobile_server() {
-    local dir="$1"
+    local dir="$1" repo
     [ -d "$dir" ] || return 0
     if nc -z -w 1 127.0.0.1 "$SUWAYOMI_MOBILE_PORT" >/dev/null 2>&1; then
         return 0
     fi
+    repo="$(dirname "$dir")"
     if command -v python3 >/dev/null 2>&1; then
-        nohup python3 -m http.server "$SUWAYOMI_MOBILE_PORT" --bind 127.0.0.1 --directory "$dir" >/dev/null 2>&1 &
+        if [ -f "$repo/mobile-server.py" ]; then
+            SUWAYOMI_MOBILE_PORT="$SUWAYOMI_MOBILE_PORT" nohup python3 "$repo/mobile-server.py" >/dev/null 2>&1 &
+        else
+            nohup python3 -m http.server "$SUWAYOMI_MOBILE_PORT" --bind 127.0.0.1 --directory "$dir" >/dev/null 2>&1 &
+        fi
         disown 2>/dev/null || true
     fi
 }
 
 stop_mobile_server() {
+    pkill -f "mobile-server\.py" 2>/dev/null || true
     pkill -f "http\.server ${SUWAYOMI_MOBILE_PORT} --bind 127\.0\.0\.1" 2>/dev/null || true
 }
 
