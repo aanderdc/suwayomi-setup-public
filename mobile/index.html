@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/movil/icon-192.png">
   <link rel="icon" type="image/svg+xml" href="/movil/icon.svg">
   <link rel="apple-touch-icon" sizes="192x192" href="/movil/icon-192.png">
-  <link rel="stylesheet" href="/movil/styles.css?v=3">
+  <link rel="stylesheet" href="/movil/styles.css?v=4">
 </head>
 <body>
   <div id="app">
@@ -24,6 +24,13 @@
       </div>
       <div id="headerSub" class="header-sub hidden"></div>
     </header>
+
+    <!-- Banner de modo sin conexión (tipo Spotify) -->
+    <div id="offlineBanner" class="offline-banner hidden">
+      <span class="offline-dot"></span>
+      <span class="offline-banner-text">Sin conexión con el PC · Solo capítulos descargados</span>
+      <button id="offlineRetryBtn" class="offline-retry-btn" type="button">Conectar</button>
+    </div>
 
     <!-- Banner de instalación directa como app (solo primera vez en navegador) -->
     <div id="installBanner" class="install-banner hidden">
@@ -111,6 +118,7 @@
     <div id="toast" class="toast hidden"></div>
   </div>
 
-  <script src="/movil/app.js?v=3"></script>
+  <script src="/movil/offline.js?v=4"></script>
+  <script src="/movil/app.js?v=4"></script>
 </body>
 </html>

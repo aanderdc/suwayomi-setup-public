@@ -68,12 +68,10 @@ puertos del router ni publicarla en Internet:
 3. En tu movil, instala la app "Tailscale", entra con
    la MISMA cuenta y activa la conexion VPN.
 4. Escanea el codigo QR que aparece en la ventana del
-   PC (o abre el enlace privado .../movil/) y listo.
-   Se abrira el lector movil estilo app (vertical
-   continuo o paginado, modo oscuro y filtro nocturno).
-   Consejo: en Chrome/Safari pulsa el menu y elige
-   "Anadir a pantalla de inicio" para leer a pantalla
-   completa sin barras del navegador.
+   PC solo la PRIMERA vez y pulsa "Instalar" arriba
+   para guardarla como app en tu movil.
+   Puedes descargar capitulos (boton ↓ o "↓ Sig. 5")
+   para leerlos incluso con el PC apagado y sin red.
 
 Nota: el PC debe estar encendido con Suwayomi activo.
 En la misma ventana tienes un boton para evitar que

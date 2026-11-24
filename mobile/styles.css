@@ -122,6 +122,49 @@ button, input, select {
   font-weight: 600;
 }
 
+/* ---------------- Banner de modo sin conexión (tipo Spotify) ---------------- */
+.offline-banner {
+  position: sticky;
+  top: 0;
+  z-index: 19;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #1d2230;
+  border-bottom: 1px solid rgba(255, 193, 7, 0.35);
+  font-size: 12px;
+  color: #f6d57a;
+}
+
+.offline-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f5b942;
+  flex: 0 0 auto;
+}
+
+.offline-banner-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.offline-retry-btn {
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 /* ---------------- Banner de instalación como app ---------------- */
 .install-banner {
   margin: 10px 12px 0;
@@ -256,6 +299,72 @@ button, input, select {
 .manga-badge.in-lib {
   background: rgba(48, 196, 116, 0.92);
   color: #062111;
+}
+
+.manga-dl-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(16, 24, 32, 0.86);
+  border: 1px solid rgba(48, 196, 116, 0.75);
+  color: #5ae298;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 6px;
+}
+
+.manga-card.offline-dim,
+.list-card.offline-dim {
+  opacity: 0.42;
+  filter: grayscale(0.45);
+}
+
+.chapter-row.offline-locked {
+  opacity: 0.42;
+}
+
+.chap-dl-btn {
+  flex: 0 0 auto;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chap-dl-btn.done {
+  border-color: rgba(48, 196, 116, 0.55);
+  background: rgba(48, 196, 116, 0.14);
+  color: var(--green);
+}
+
+.chap-dl-btn.busy {
+  border-color: rgba(255, 77, 90, 0.55);
+  background: var(--accent-soft);
+  color: #fff;
+}
+
+.chap-dl-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.dl-storage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
 }
 
 .manga-card-title {

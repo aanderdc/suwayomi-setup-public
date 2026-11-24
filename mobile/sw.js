@@ -1,9 +1,11 @@
-const CACHE_NAME = 'suwayomi-movil-v3';
+const CACHE_NAME = 'suwayomi-movil-v4';
+const MEDIA_CACHE = 'suwayomi-offline-media-v1';
 const SHELL_URLS = [
   '/movil/',
   '/movil/index.html',
-  '/movil/styles.css?v=3',
-  '/movil/app.js?v=3',
+  '/movil/styles.css?v=4',
+  '/movil/offline.js?v=4',
+  '/movil/app.js?v=4',
   '/movil/manifest.json',
   '/movil/icon-192.png',
   '/movil/icon-512.png',
@@ -21,7 +23,11 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(
+        keys
+          .filter((k) => k !== CACHE_NAME && k !== MEDIA_CACHE)
+          .map((k) => caches.delete(k))
+      ))
       .then(() => self.clients.claim())
   );
 });
@@ -31,9 +37,19 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
-  // Solo cacheamos el shell de /movil/ (nunca /api/graphql ni imagenes dinamicas)
   if (!url.pathname.startsWith('/movil')) return;
 
+  // Servir portadas y páginas descargadas directamente desde la caché offline
+  if (url.pathname.startsWith('/movil/__offline__/')) {
+    event.respondWith(
+      caches.open(MEDIA_CACHE)
+        .then((cache) => cache.match(url.pathname))
+        .then((res) => res || new Response('', { status: 404 }))
+    );
+    return;
+  }
+
+  // App shell: red primero con respaldo inmediato en caché si el PC está apagado
   event.respondWith(
     fetch(req)
       .then((res) => {
