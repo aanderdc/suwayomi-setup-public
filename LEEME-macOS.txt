@@ -66,6 +66,26 @@ crear "Suwayomi.app" (se abre sin ventana de Terminal
 y puedes ponerla en el Dock).
 
 -----------------------------------------------------
+LEER DESDE EL MOVIL (OPCIONAL, CON DATOS O WIFI)
+-----------------------------------------------------
+
+Puedes abrir tu biblioteca desde el movil sin abrir
+puertos del router ni publicarla en Internet:
+
+1. En el panel, elige "Acceso desde el movil (Tailscale)"
+   y pulsa "Activar / configurar acceso movil".
+2. Sigue los avisos (instala Tailscale en el Mac si no
+   lo tienes, inicia sesion y activa HTTPS privado;
+   NO actives Funnel).
+3. En tu movil, instala la app "Tailscale", entra con
+   la MISMA cuenta y activa la conexion VPN.
+4. Abre el enlace privado (https://...ts.net/) que se
+   copia al portapapeles.
+
+Recuerda dejar el Mac encendido, sin suspender y con
+Suwayomi en marcha mientras lees desde el movil.
+
+-----------------------------------------------------
 ES SEGURO?
 -----------------------------------------------------
 

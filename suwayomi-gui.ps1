@@ -143,13 +143,13 @@ New-Section 'MANTENIMIENTO Y SEGURIDAD' 334
 $btnHistory = New-Btn 'Borrar historial' 20  356 225 35 $null
 $btnScan    = New-Btn 'Escanear extensiones' 255 356 225 35 $null
 
+New-Section 'ACCESO DESDE EL MOVIL (por datos o WiFi)' 399
+$btnMobile = New-Btn 'Acceso desde el movil (Tailscale)' 20 421 460 40 $blue
+
 $tip = New-Object System.Windows.Forms.ToolTip
 $tip.SetToolTip($btnHistory, 'Borra el historial de lectura (con copia de seguridad)')
-$tip.SetToolTip($btnMobile, 'Instala y configura Tailscale paso a paso y te da la direccion para el movil')
 $tip.SetToolTip($btnScan, 'Comprueba las extensiones instaladas en VirusTotal (necesita una API key gratuita)')
-
-New-Section 'ACCESO DESDE EL MOVIL (por datos o WiFi)' 399
-$btnMobile = New-Btn 'Configurar acceso desde el movil (Tailscale)' 20 421 460 40 $blue
+$tip.SetToolTip($btnMobile, 'Abre el asistente visual de Tailscale: acceso privado HTTPS, codigo QR y control de suspension')
 
 $txtLog = New-Object System.Windows.Forms.TextBox
 $txtLog.Location = New-Object System.Drawing.Point(20, 468)
@@ -218,8 +218,10 @@ $btnHistory.Add_Click({
 })
 
 $btnMobile.Add_Click({
-    Write-Log 'Configurando el acceso desde el movil. Sigue los pasos de la otra ventana.'
-    Run-Visible 'setup-tailscale.ps1'
+    $path = Join-Path $Root 'setup-tailscale.ps1'
+    if (-not (Test-Path $path)) { Msg 'No se encuentra setup-tailscale.ps1 en la carpeta.' 'Error'; return }
+    Write-Log 'Abriendo asistente de acceso desde el movil (Tailscale)...'
+    Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $path
 })
 
 $btnScan.Add_Click({

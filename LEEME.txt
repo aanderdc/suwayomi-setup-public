@@ -54,6 +54,30 @@ IMPORTANTE: cerrar la ventana NO apaga Suwayomi.
 Usa el boton "Apagar".
 
 -----------------------------------------------------
+LEER DESDE EL MOVIL (OPCIONAL, CON DATOS O WIFI)
+-----------------------------------------------------
+
+Puedes abrir tu biblioteca desde el movil sin abrir
+puertos del router ni publicarla en Internet:
+
+1. En el panel, pulsa "Acceso desde el movil (Tailscale)".
+2. Pulsa "Activar acceso desde el movil" y sigue los
+   avisos en pantalla (te pedira iniciar sesion con
+   una cuenta gratuita de Tailscale y activar HTTPS
+   privado; NO actives Funnel).
+3. En tu movil, instala la app "Tailscale", entra con
+   la MISMA cuenta y activa la conexion VPN.
+4. Escanea el codigo QR que aparece en la ventana del
+   PC (o abre el enlace privado) y listo.
+   Consejo: en el navegador del movil pulsa el menu
+   y elige "Anadir a pantalla de inicio".
+
+Nota: el PC debe estar encendido con Suwayomi activo.
+En la misma ventana tienes un boton para evitar que
+el PC se suspenda al estar enchufado (la pantalla si
+se seguira apagando) y poder restaurarlo cuando quieras.
+
+-----------------------------------------------------
 ES SEGURO?
 -----------------------------------------------------
 

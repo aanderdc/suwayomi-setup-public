@@ -20,7 +20,7 @@ instalar, encender, apagar y abrir el lector en el navegador.
 | `setup-sources.ps1` | `setup-sources.sh` | Con el servidor encendido, añade el repositorio de extensiones [Keiyoushi](https://github.com/keiyoushi/extensions). |
 | `clear-history.ps1` | `clear-history.sh` | Borra el historial de lectura (con copia de seguridad previa). |
 | `verificar-extensiones.ps1` | — | Comprueba en VirusTotal las extensiones instaladas (solo Windows; necesita una API key gratuita). |
-| `setup-tailscale.ps1` | — | Configura Tailscale paso a paso para usar Suwayomi desde el movil (incluso con datos). Solo Windows. |
+| `setup-tailscale.ps1` | `setup-tailscale.sh` | Asistente visual para usar Suwayomi desde el móvil con Tailscale (acceso privado HTTPS, código QR en Windows y control de suspensión). |
 | — | `common.sh` | Configuración compartida de los scripts de macOS. |
 | — | `crear-app.sh` | Opcional: crea `Suwayomi.app` para abrir el panel sin ventana de Terminal. |
 
@@ -49,6 +49,17 @@ bloquea los archivos: `xattr -dr com.apple.quarantine . && chmod +x *.command *.
 Abre el panel y usa **Encender**, **Apagar** o **Abrir Suwayomi en el navegador**.
 **Cerrar la ventana del panel no apaga Suwayomi**; usa el botón **Apagar**.
 
+## Acceso desde el móvil (opcional, con Tailscale)
+
+Si quieres leer desde tu móvil Android o iPhone (con WiFi o con datos móviles) sin abrir puertos del router ni exponer Suwayomi a Internet:
+
+1. En el panel de control, pulsa **Acceso desde el móvil (Tailscale)**.
+2. Pulsa **Activar acceso desde el móvil** y sigue los avisos en pantalla (instala Tailscale, inicia sesión y activa HTTPS privado/Serve; nunca se activa Funnel).
+3. En tu móvil, instala la app **Tailscale**, entra con la **misma cuenta** y activa la conexión VPN.
+4. Escanea el **código QR** que muestra el asistente (en Windows) o abre el enlace privado `https://...ts.net/` que se copia al portapapeles.
+
+En Windows, el propio asistente incluye un botón para **evitar que el PC se suspenda cuando está enchufado** (y restaurar tu ajuste anterior con un clic), ya que si el PC se suspende se corta la conexión desde el móvil.
+
 ## Configuración
 
 | | Windows | macOS |
@@ -74,7 +85,7 @@ bash install.sh --version v2.4.2366 --install-dir "$HOME/Suwayomi"
   señal de cierre limpio y solo fuerza el cierre si no responde en unos 10 s.
 - Evita apagar mientras Suwayomi descarga o actualiza la biblioteca.
 - Backup: con Suwayomi apagado, copia `database.mv.db` y la carpeta `downloads` de la carpeta de datos.
-- Para acceder desde otros dispositivos de la red hay que usar la IP del equipo y configurar `server.ip` en `server.conf`.
+- Para acceder desde el móvil de forma privada usa el botón **Acceso desde el móvil (Tailscale)** (no requiere abrir puertos ni cambiar `server.conf`). Para acceso directo en red local sin Tailscale, configura `server.ip` en `server.conf`.
 - Las extensiones son código de terceros que se ejecuta en tu equipo: instala solo las de repositorios en los
   que confíes. Los scripts de este repositorio son texto plano y puedes leerlos antes de ejecutarlos.
 

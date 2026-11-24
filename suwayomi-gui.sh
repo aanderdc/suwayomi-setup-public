@@ -15,6 +15,7 @@ L_SOURCES="2. Añadir repositorio de extensiones"
 L_LOG="Ver registro"
 L_FOLDER="Abrir carpeta de datos"
 L_HIST="Borrar historial de lectura"
+L_MOBILE="Acceso desde el móvil (Tailscale)"
 
 q() { printf '%q' "$1"; }   # escapa una ruta para meterla en un comando
 
@@ -120,6 +121,10 @@ do_history() {
     run_in_terminal "bash $(q "$ROOT/clear-history.sh")$extra"
 }
 
+do_mobile() {
+    bash "$ROOT/setup-tailscale.sh"
+}
+
 # ---------------- Bucle principal ----------------
 
 while true; do
@@ -135,7 +140,7 @@ while true; do
         NOINST)   status="NO INSTALADO ⚪️"
                   items=("$L_INSTALL") ;;
     esac
-    items+=("$L_LOG" "$L_FOLDER" "$L_HIST")
+    items+=("$L_MOBILE" "$L_LOG" "$L_FOLDER" "$L_HIST")
 
     if [ "$state" = NOINST ]; then
         hint="Bienvenido. Elige \"1. Instalar Suwayomi\" para empezar."
@@ -159,6 +164,7 @@ $hint" "${items[@]}")"
         "$L_LOG")     do_log ;;
         "$L_FOLDER")  do_folder ;;
         "$L_HIST")    do_history ;;
+        "$L_MOBILE")  do_mobile ;;
     esac
     # Pequeña pausa para que el estado se actualice antes de volver a mostrar el menú
     sleep 1
