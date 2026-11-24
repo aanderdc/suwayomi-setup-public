@@ -4,6 +4,7 @@
 # Compatible con el bash 3.2 que trae macOS (sin arrays asociativos, etc.).
 
 SUWAYOMI_PORT="${SUWAYOMI_PORT:-4567}"
+SUWAYOMI_MOBILE_PORT="${SUWAYOMI_MOBILE_PORT:-4568}"
 SUWAYOMI_URL="http://localhost:$SUWAYOMI_PORT"
 DATA_DIR="${SUWAYOMI_DATA_DIR:-$HOME/Library/Application Support/Tachidesk}"
 INSTALL_ROOT="${SUWAYOMI_INSTALL_ROOT:-$HOME/Suwayomi}"
@@ -14,6 +15,23 @@ DEFAULT_VERSION="v2.4.2366"
 # ¿Responde el servidor en el puerto?
 server_up() {
     nc -z -w 1 127.0.0.1 "$SUWAYOMI_PORT" >/dev/null 2>&1
+}
+
+# Arranca/detiene el servidor local ligero de la interfaz móvil (puerto 4568)
+start_mobile_server() {
+    local dir="$1"
+    [ -d "$dir" ] || return 0
+    if nc -z -w 1 127.0.0.1 "$SUWAYOMI_MOBILE_PORT" >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        nohup python3 -m http.server "$SUWAYOMI_MOBILE_PORT" --bind 127.0.0.1 --directory "$dir" >/dev/null 2>&1 &
+        disown 2>/dev/null || true
+    fi
+}
+
+stop_mobile_server() {
+    pkill -f "http\.server ${SUWAYOMI_MOBILE_PORT} --bind 127\.0\.0\.1" 2>/dev/null || true
 }
 
 # Imprime la carpeta del servidor (la que contiene bin/Suwayomi-Server.jar)

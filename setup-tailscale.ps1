@@ -305,6 +305,7 @@ if (-not ('LocalQrCode' -as [type])) {
 # ---------------- Configuracion ----------------
 $Root        = $PSScriptRoot
 $Port        = 4567
+$MobilePort  = 4568
 $DataDir     = Join-Path $env:LOCALAPPDATA 'Tachidesk'
 $InstallRoot = Join-Path $env:USERPROFILE 'Suwayomi'
 $SleepBackup = Join-Path $DataDir 'tailscale-sleep-backup.txt'
@@ -315,15 +316,21 @@ $script:LastQrUrl    = ''
 $script:CurrentUrl   = ''
 $script:UseMobileUi  = $true
 
-function Sync-MobileWebApp {
-    $src = Join-Path $Root 'mobile'
-    if (-not (Test-Path $src)) { return $false }
+function Start-MobileServer {
+    if (Test-LocalPort $MobilePort) { return $true }
+    $srv = Join-Path $Root 'mobile-server.ps1'
+    if (-not (Test-Path $srv)) { return $false }
     try {
-        $dest = Join-Path $DataDir 'webUI\movil'
-        New-Item -ItemType Directory -Force -Path $dest | Out-Null
-        Copy-Item -Path (Join-Path $src '*') -Destination $dest -Force
+        Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $srv -WindowStyle Hidden
         return $true
     } catch { return $false }
+}
+
+function Ensure-MobileServeRoute($ts) {
+    if (-not $ts) { return }
+    try {
+        & $ts serve --bg --set-path /movil "http://127.0.0.1:$MobilePort" 2>$null | Out-Null
+    } catch { }
 }
 
 # ---------------- Utilidades ----------------
@@ -370,7 +377,7 @@ function Get-SuwayomiLauncher {
 }
 
 function Start-SuwayomiServer {
-    Sync-MobileWebApp | Out-Null
+    Start-MobileServer | Out-Null
     $launcher = Get-SuwayomiLauncher
     if (-not $launcher) { return $false }
     $dir = $launcher.DirectoryName
@@ -440,6 +447,7 @@ function Get-MobileState {
     }
 
     $serveActive = $false
+    $mobileRouteActive = $false
     $funnelActive = $false
     $serveUrl = ''
     if ($loggedIn) {
@@ -462,6 +470,9 @@ function Get-MobileState {
                                 $hostOnly = ($hostPort -split ':')[0]
                                 $serveUrl = "https://$hostOnly/"
                             }
+                            if ($hp.Name -match '^/movil' -and $proxy -match ":$MobilePort(/|$)") {
+                                $mobileRouteActive = $true
+                            }
                         }
                     }
                 }
@@ -474,19 +485,21 @@ function Get-MobileState {
     $activeUrl = if ($serveActive) { if ($script:UseMobileUi) { $mobileUrl } else { $serveUrl } } else { '' }
 
     return [pscustomobject]@{
-        TailscaleExe = $ts
-        Installed    = $installed
-        LoggedIn     = $loggedIn
-        DnsName      = $dns
-        PeerCount    = $peerCount
-        OnlinePeers  = $onlinePeers
-        ServeActive  = $serveActive
-        FunnelActive = $funnelActive
-        BaseUrl      = if ($serveActive) { $serveUrl } else { '' }
-        Url          = $activeUrl
-        SuwayomiUp   = (Test-LocalPort $Port)
-        SuwayomiInst = [bool](Get-SuwayomiLauncher)
-        AcSleepMin   = (Get-AcSleepMinutes)
+        TailscaleExe      = $ts
+        Installed         = $installed
+        LoggedIn          = $loggedIn
+        DnsName           = $dns
+        PeerCount         = $peerCount
+        OnlinePeers       = $onlinePeers
+        ServeActive       = $serveActive
+        MobileRouteActive = $mobileRouteActive
+        MobileServerUp    = (Test-LocalPort $MobilePort)
+        FunnelActive      = $funnelActive
+        BaseUrl           = if ($serveActive) { $serveUrl } else { '' }
+        Url               = $activeUrl
+        SuwayomiUp        = (Test-LocalPort $Port)
+        SuwayomiInst      = [bool](Get-SuwayomiLauncher)
+        AcSleepMin        = (Get-AcSleepMinutes)
     }
 }
 
@@ -930,8 +943,10 @@ $btnAction.Add_Click({
         return
     }
 
-    # Caso: ya esta todo listo -> comprobar y copiar
+    # Caso: ya esta todo listo -> asegurar ruta /movil y servidor movil, comprobar y copiar
     if ($st.ServeActive -and $st.SuwayomiUp) {
+        Start-MobileServer | Out-Null
+        if (-not $st.MobileRouteActive -and $st.TailscaleExe) { Ensure-MobileServeRoute $st.TailscaleExe }
         try { Set-Clipboard -Value $st.Url } catch { }
         Write-Log "Todo correcto. Enlace privado copiado al portapapeles."
         Show-Msg ("Todo funciona y el acceso es privado.`n`n" +
@@ -1027,6 +1042,10 @@ $btnAction.Add_Click({
             return
         }
 
+        # Registrar tambien la ruta /movil y arrancar servidor ligero de la interfaz movil
+        Ensure-MobileServeRoute $ts
+        Start-MobileServer | Out-Null
+
         # Verificar que Funnel no este activo
         $finalSt = Get-MobileState
         if ($finalSt.FunnelActive) {
@@ -1073,6 +1092,7 @@ $btnDisable.Add_Click({
     Write-Log 'Desactivando acceso movil...'
     try {
         & $ts funnel --https=443 off 2>$null | Out-Null
+        & $ts serve --https=443 --set-path /movil off 2>$null | Out-Null
         & $ts serve --https=443 off 2>$null | Out-Null
         Write-Log 'Acceso movil desactivado.'
     } catch {
@@ -1137,9 +1157,12 @@ $timer.Add_Tick({
 })
 
 $form.Add_Shown({
-    Sync-MobileWebApp | Out-Null
-    Update-Ui
     $st = Get-MobileState
+    if ($st.ServeActive) {
+        Start-MobileServer | Out-Null
+        if (-not $st.MobileRouteActive -and $st.TailscaleExe) { Ensure-MobileServeRoute $st.TailscaleExe }
+    }
+    Update-Ui
     if ($st.ServeActive) {
         Write-Log 'Acceso privado activo. Escanea el QR para abrir el lector movil (estilo app).'
     } else {

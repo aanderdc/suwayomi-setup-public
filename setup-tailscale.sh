@@ -60,11 +60,10 @@ copy_url() {
     fi
 }
 
-sync_mobile_webapp() {
-    if [ -d "$ROOT/mobile" ]; then
-        mkdir -p "$DATA_DIR/webUI/movil"
-        cp -f "$ROOT/mobile/"* "$DATA_DIR/webUI/movil/" 2>/dev/null || true
-    fi
+ensure_mobile_route() {
+    local ts="$1"
+    start_mobile_server "$ROOT/mobile"
+    "$ts" serve --bg --set-path /movil "http://127.0.0.1:$SUWAYOMI_MOBILE_PORT" >/dev/null 2>&1 || true
 }
 
 run_and_open_url() {
@@ -163,7 +162,7 @@ Pulsa OK cuando lo hayas activado." \
         ui_msg "Acceso activado, pero no pude leer el nombre de tu equipo en Tailscale. Revisa 'tailscale status'." caution
         return
     fi
-    sync_mobile_webapp
+    ensure_mobile_route "$ts"
     url="https://$dns/movil/"
     copy_url "$url"
 
@@ -187,6 +186,7 @@ do_deactivate() {
 
 Podrás volver a activarlo cuando quieras." || return
     "$ts" funnel --https=443 off >/dev/null 2>&1 || true
+    "$ts" serve --https=443 --set-path /movil off >/dev/null 2>&1 || true
     "$ts" serve --https=443 off >/dev/null 2>&1 || true
     ui_msg "Acceso desde el móvil desactivado." note
 }
@@ -206,7 +206,7 @@ while true; do
         status="ATENCIÓN: Funnel público activo ⚠️"
         items=("$L_FIX" "$L_OFF")
     elif [ -n "$TS" ] && ts_serve_active "$TS"; then
-        sync_mobile_webapp
+        ensure_mobile_route "$TS"
         DNS="$(ts_dns_name "$TS")"
         URL="https://$DNS/movil/"
         status="ACTIVO ✅

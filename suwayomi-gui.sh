@@ -44,10 +44,7 @@ do_start() {
         return
     }
     mkdir -p "$DATA_DIR"
-    if [ -d "$ROOT/mobile" ]; then
-        mkdir -p "$DATA_DIR/webUI/movil"
-        cp -f "$ROOT/mobile/"* "$DATA_DIR/webUI/movil/" 2>/dev/null || true
-    fi
+    start_mobile_server "$ROOT/mobile"
     out="$DATA_DIR/suwayomi-stdout.log"
     # Se arranca el servidor directamente (sin la ventana del lanzador).
     # - initialOpenInBrowserEnabled=false: el navegador lo abre este panel, así no salen dos pestañas.
@@ -80,6 +77,7 @@ do_start() {
 
 do_stop() {
     stop_server
+    stop_mobile_server
     ui_notify "Suwayomi apagado."
 }
 

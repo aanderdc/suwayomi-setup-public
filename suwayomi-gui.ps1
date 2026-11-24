@@ -5,6 +5,7 @@ Add-Type -AssemblyName System.Drawing
 # ---------------- Configuracion ----------------
 $Root        = $PSScriptRoot
 $Port        = 4567
+$MobilePort  = 4568
 $Url         = "http://localhost:$Port"
 $DataDir     = Join-Path $env:LOCALAPPDATA 'Tachidesk'
 $InstallRoot = Join-Path $env:USERPROFILE 'Suwayomi'
@@ -22,14 +23,18 @@ function Write-Log($text) {
     $txtLog.AppendText(("[{0}] {1}`r`n" -f (Get-Date -Format 'HH:mm:ss'), $text))
 }
 
-function Test-Server {
+function Test-Port($portNum) {
     try {
         $c = New-Object System.Net.Sockets.TcpClient
-        $iar = $c.BeginConnect('127.0.0.1', $Port, $null, $null)
+        $iar = $c.BeginConnect('127.0.0.1', $portNum, $null, $null)
         $ok = $iar.AsyncWaitHandle.WaitOne(300) -and $c.Connected
         $c.Close()
         return $ok
     } catch { return $false }
+}
+
+function Test-Server {
+    return (Test-Port $Port)
 }
 
 function Get-Launcher {
@@ -43,14 +48,17 @@ function Get-SuwayomiProcesses {
         Where-Object { $_.Name -match 'java' -and $_.CommandLine -match 'Suwayomi' }
 }
 
-function Sync-MobileWebApp {
-    $src = Join-Path $Root 'mobile'
-    if (-not (Test-Path $src)) { return }
-    try {
-        $dest = Join-Path $DataDir 'webUI\movil'
-        New-Item -ItemType Directory -Force -Path $dest | Out-Null
-        Copy-Item -Path (Join-Path $src '*') -Destination $dest -Force
-    } catch { }
+function Start-MobileServer {
+    if (Test-Port $MobilePort) { return }
+    $srv = Join-Path $Root 'mobile-server.ps1'
+    if (-not (Test-Path $srv)) { return }
+    Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $srv -WindowStyle Hidden
+}
+
+function Stop-MobileServer {
+    $procs = Get-CimInstance Win32_Process |
+        Where-Object { $_.Name -match 'powershell' -and $_.CommandLine -match 'mobile-server\.ps1' }
+    foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
 function Run-Visible($scriptName, $scriptArgs = '') {
@@ -174,7 +182,7 @@ $form.Controls.Add($txtLog)
 # ---------------- Acciones ----------------
 $btnStart.Add_Click({
     if (-not $script:Launcher) { Msg 'Suwayomi no esta instalado. Pulsa "Instalar Suwayomi".' 'Warning'; return }
-    Sync-MobileWebApp
+    Start-MobileServer
     $dir = $script:Launcher.DirectoryName
     $java = $null
     $jre = Join-Path $dir 'jre\bin\javaw.exe'
@@ -194,6 +202,7 @@ $btnStart.Add_Click({
 $btnStop.Add_Click({
     $procs = Get-SuwayomiProcesses
     foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    Stop-MobileServer
     $script:Starting = $false
     Write-Log 'Suwayomi apagado.'
     Update-State
@@ -263,6 +272,7 @@ $timer.Add_Tick({ Update-State })
 
 $form.Add_Shown({
     Update-State
+    if (Test-Server) { Start-MobileServer }
     if (-not $script:Launcher) { Write-Log 'Bienvenido. Pulsa "1. Instalar Suwayomi" para empezar.' }
     else { Write-Log 'Listo. Pulsa "Encender" para usar Suwayomi.' }
     $timer.Start()

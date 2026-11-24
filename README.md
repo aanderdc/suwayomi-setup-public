@@ -21,7 +21,8 @@ instalar, encender, apagar y abrir el lector en el navegador.
 | `clear-history.ps1` | `clear-history.sh` | Borra el historial de lectura (con copia de seguridad previa). |
 | `verificar-extensiones.ps1` | — | Comprueba en VirusTotal las extensiones instaladas (solo Windows; necesita una API key gratuita). |
 | `setup-tailscale.ps1` | `setup-tailscale.sh` | Asistente visual para usar Suwayomi desde el móvil con Tailscale (acceso privado HTTPS, código QR en Windows y control de suspensión). |
-| `mobile/` | `mobile/` | Lector web móvil estilo app (PWA, ruta `/movil/`): scroll vertical continuo o paginado, barra inferior, filtro nocturno y sincronización con Suwayomi. |
+| `mobile/` | `mobile/` | Lector web móvil estilo app (PWA, ruta `/movil/`): modo continuo tipo PDF al 100% del ancho o paginado, barra inferior, filtro nocturno y sincronización con Suwayomi. |
+| `mobile-server.ps1` | — | Servidor local ligero (solo `127.0.0.1:4568`) que sirve `mobile/` sin tocar los archivos internos de Suwayomi. |
 | — | `common.sh` | Configuración compartida de los scripts de macOS. |
 | — | `crear-app.sh` | Opcional: crea `Suwayomi.app` para abrir el panel sin ventana de Terminal. |
 
