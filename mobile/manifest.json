@@ -1,4 +1,5 @@
 {
+  "id": "/movil/",
   "name": "Suwayomi Móvil",
   "short_name": "Suwayomi",
   "description": "Lector de manga móvil para tu servidor privado de Suwayomi",
@@ -10,10 +11,33 @@
   "theme_color": "#0b0d12",
   "icons": [
     {
+      "src": "/movil/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/movil/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/movil/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/movil/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
       "src": "/movil/icon.svg",
       "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "type": "image/svg+xml"
     }
   ]
 }

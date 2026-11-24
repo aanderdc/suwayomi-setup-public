@@ -90,6 +90,89 @@
   const readerSheetBackdrop = $('readerSheetBackdrop');
   const readerSheet = $('readerSheet');
   const toastEl = $('toast');
+  const installBanner = $('installBanner');
+  const installBannerBtn = $('installBannerBtn');
+  const installBannerClose = $('installBannerClose');
+
+  // ---------------- Instalación PWA (una sola vez, sin volver a escanear QR) ----------------
+  let deferredInstallPrompt = null;
+  const INSTALL_DISMISSED_KEY = 'suwayomi_install_dismissed_v1';
+
+  function isStandaloneApp() {
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+      || window.navigator.standalone === true;
+  }
+
+  function isIosBrowser() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent || '');
+  }
+
+  function updateInstallBanner() {
+    if (!installBanner) return;
+    if (isStandaloneApp()) {
+      installBanner.classList.add('hidden');
+      return;
+    }
+    const dismissed = sessionStorage.getItem(INSTALL_DISMISSED_KEY) === '1';
+    if (dismissed) {
+      installBanner.classList.add('hidden');
+      return;
+    }
+    if (deferredInstallPrompt || isIosBrowser()) {
+      installBanner.classList.remove('hidden');
+    } else {
+      // En Android antes de beforeinstallprompt también lo mostramos para guiar con 1 toque
+      installBanner.classList.remove('hidden');
+    }
+  }
+
+  async function triggerInstallApp() {
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      try {
+        const res = await deferredInstallPrompt.userChoice;
+        if (res && res.outcome === 'accepted') {
+          showToast('Instalando Suwayomi Móvil...');
+          installBanner.classList.add('hidden');
+        }
+      } catch { }
+      deferredInstallPrompt = null;
+      if (state.tab === 'settings') renderSettings();
+      return;
+    }
+    if (isIosBrowser()) {
+      alert('Para instalarla en iPhone/iPad:\n\n1. Pulsa el botón Compartir (cuadro con flecha abajo).\n2. Elige "Añadir a pantalla de inicio".\n\nYa no tendrás que volver a escanear el QR.');
+    } else {
+      alert('Para instalarla en tu móvil:\n\n1. Pulsa el menú de Chrome (los 3 puntos arriba a la derecha).\n2. Pulsa "Instalar aplicación" o "Añadir a pantalla de inicio".\n\nQuedará como una app en tu móvil y no tendrás que volver a escanear el QR.');
+    }
+  }
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    updateInstallBanner();
+    if (state.tab === 'settings') renderSettings();
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    if (installBanner) installBanner.classList.add('hidden');
+    showToast('App instalada. Ya no necesitas el QR.');
+    if (state.tab === 'settings') renderSettings();
+  });
+
+  if (installBannerBtn) installBannerBtn.addEventListener('click', triggerInstallApp);
+  if (installBannerClose) {
+    installBannerClose.addEventListener('click', () => {
+      sessionStorage.setItem(INSTALL_DISMISSED_KEY, '1');
+      installBanner.classList.add('hidden');
+    });
+  }
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/movil/sw.js', { scope: '/movil/' }).catch(() => { });
+  }
+  updateInstallBanner();
 
   let toastTimer = null;
   function showToast(msg) {
@@ -677,10 +760,15 @@
       </div>
 
       <div class="settings-card">
-        <div style="font-size:14px;font-weight:700;margin-bottom:6px">Instalar como aplicación</div>
-        <p style="margin:0 0 12px;font-size:13px;color:var(--muted);line-height:1.45">
-          En Chrome (Android) o Safari (iPhone), abre el menú y pulsa <strong>"Añadir a pantalla de inicio"</strong> para leer a pantalla completa sin barras del navegador.
-        </p>
+        <div style="font-size:14px;font-weight:700;margin-bottom:6px">App en tu móvil</div>
+        ${isStandaloneApp()
+          ? '<p style="margin:0 0 12px;font-size:13px;color:var(--green);line-height:1.45"><strong>✓ Ya estás usando la app instalada.</strong> Se abre directo en tu móvil sin volver a escanear el QR.</p>'
+          : `<p style="margin:0 0 12px;font-size:13px;color:var(--muted);line-height:1.45">
+               Instálala una sola vez para tener el icono en tu móvil, leer a pantalla completa y no volver a escanear el QR.
+             </p>
+             <button id="settingsInstallBtn" class="primary-btn" type="button" style="margin-bottom:10px">
+               ${deferredInstallPrompt ? 'Instalar app ahora' : 'Cómo instalar en pantalla de inicio'}
+             </button>`}
         <a href="/" class="secondary-btn" style="display:block;text-align:center;text-decoration:none">
           Abrir Suwayomi completo (instalar extensiones)
         </a>
@@ -701,6 +789,8 @@
       $('setDimVal').textContent = state.prefs.dim + '%';
       savePrefs();
     });
+    const instBtn = $('settingsInstallBtn');
+    if (instBtn) instBtn.addEventListener('click', triggerInstallApp);
   }
 
   // ---------------- Detalle de Manga ----------------

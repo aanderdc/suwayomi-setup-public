@@ -657,10 +657,10 @@ $lblStepsPhone.Location = New-Object System.Drawing.Point(194, 100)
 $lblStepsPhone.Size = New-Object System.Drawing.Size(314, 90)
 $lblStepsPhone.Font = New-Object System.Drawing.Font('Segoe UI', 8.5)
 $lblStepsPhone.ForeColor = [System.Drawing.Color]::FromArgb(55, 55, 55)
-$lblStepsPhone.Text = "1. Instala la app Tailscale en tu movil.`r`n" +
-                      "2. Entra con la MISMA cuenta y conectalo.`r`n" +
-                      "3. Escanea el QR (o abre el enlace) con WiFi o datos.`r`n" +
-                      "Consejo: en el navegador usa 'Anadir a pantalla de inicio'."
+$lblStepsPhone.Text = "1. Instala la app Tailscale en tu movil y conectalo.`r`n" +
+                      "2. Escanea el QR solo la PRIMERA vez.`r`n" +
+                      "3. Pulsa 'Instalar' arriba para guardarla como app.`r`n" +
+                      "Despues abre siempre el icono en tu movil."
 $pnlPhone.Controls.Add($lblStepsPhone)
 
 # Tarjeta de suspension de Windows
