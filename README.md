@@ -18,7 +18,7 @@ instalar, encender, apagar y abrir el lector en el navegador.
 | `suwayomi-gui.ps1` | `suwayomi-gui.sh` | El panel: estado, encender, apagar, abrir, registro, carpeta de datos. En macOS usa ventanas nativas; con `--terminal` ofrece un menú de texto. |
 | `install.ps1` | `install.sh` | Descarga la release oficial de Suwayomi (incluye su propio Java) y la extrae. |
 | `setup-sources.ps1` | `setup-sources.sh` | Con el servidor encendido, añade el repositorio de extensiones [Keiyoushi](https://github.com/keiyoushi/extensions). |
-| `clear-history.ps1` | `clear-history.sh` | Borra el historial de lectura (con copia de seguridad previa). |
+| `clear-history.ps1` | `clear-history.sh` | Borra el historial de lectura completo o de un manga concreto (`-MangaId` / `--manga-id`), con copia de seguridad previa. |
 | `verificar-extensiones.ps1` | — | Comprueba en VirusTotal las extensiones instaladas (solo Windows; necesita una API key gratuita). |
 | `setup-tailscale.ps1` | `setup-tailscale.sh` | Asistente visual para usar Suwayomi desde el móvil con Tailscale (acceso privado HTTPS, código QR en Windows y control de suspensión). |
 | `mobile/` | `mobile/` | Lector web móvil estilo app (PWA, ruta `/movil/`): modo continuo tipo PDF al 100% del ancho o paginado, barra inferior, filtro nocturno y sincronización con Suwayomi. |
@@ -101,6 +101,29 @@ bash install.sh --version v2.4.2366 --install-dir "$HOME/Suwayomi"
 - **Sigue activo tras apagar** (Windows): `netstat -ano | findstr 4567` da el PID; ciérralo con `taskkill /PID <pid> /F`.
 - **Sigue activo tras apagar** (macOS): `lsof -i :4567` da el PID; ciérralo con `kill <pid>`.
 - **macOS bloquea `java`:** `xattr -dr com.apple.quarantine ~/Suwayomi`.
+
+## Posibles mejoras (en desarrollo)
+
+Este proyecto está en desarrollo activo. Algunas ideas y mejoras previstas o posibles para futuras versiones:
+
+### App móvil (`/movil/`)
+- **Lector aún más personalizable:** ajuste de lectura por manga (p. ej. recordar si un manga concreto es vertical/webtoon o paginado D→I), modo doble página en horizontal/tablets, recorte automático de bordes blancos y doble toque para hacer zoom.
+- **Paso automático entre capítulos:** pasar al capítulo siguiente al llegar al final haciendo scroll continuo sin pulsar botón.
+- **Gestos y comodidad:** control de brillo deslizando por el borde, bloquear orientación de pantalla, y mantener pantalla encendida (*Wake Lock*) mientras lees.
+- **Organización y biblioteca:** crear/editar categorías desde el móvil, ordenar la biblioteca (último leído, alfabético, sin leer, añadidos recientes), búsqueda global entre todas las fuentes instaladas y actualización masiva de biblioteca desde el móvil.
+- **Notificaciones de nuevos capítulos:** aviso visual en la pestaña *Novedades / Actualizaciones* con los capítulos recién salidos de tu biblioteca.
+
+### Modo sin conexión y descargas
+- **Descarga automática:** opción para descargar automáticamente los próximos *N* capítulos sin leer o borrar un capítulo del móvil al terminarlo.
+- **Gestión de cola de descargas:** pausar, cancelar o reordenar descargas en curso desde una vista dedicada.
+- **Indicador de cuota disponible:** mostrar cuánto espacio libre tiene el navegador en el móvil y avisar antes de llenarlo.
+
+### Panel de control (Windows y macOS)
+- **Actualizador de Suwayomi en 1 clic:** comprobar si hay nueva versión oficial en GitHub y actualizar conservando la biblioteca.
+- **Inicio automático con el PC:** opción reversible para arrancar Suwayomi y el servidor móvil al encender Windows/macOS (y opción de icono en bandeja).
+- **Copias de seguridad guiadas:** botón en el panel para exportar/restaurar `database.mv.db` y backups compatibles con Mihon/Tachiyomi.
+- **Código QR en macOS y soporte Linux:** paridad visual completa entre Windows, macOS y Linux (incluyendo escaneo de VirusTotal en macOS).
+- **Encendido remoto (Wake-on-LAN):** poder despertar el PC desde el móvil cuando esté suspendido o apagado.
 
 ## Licencia
 
