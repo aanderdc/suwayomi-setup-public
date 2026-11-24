@@ -2,12 +2,12 @@
   'use strict';
 
   const API_URL = '/api/graphql';
-  const PREFS_KEY = 'suwayomi_mobile_prefs_v1';
+  const PREFS_KEY = 'suwayomi_mobile_prefs_v2';
 
   const DEFAULT_PREFS = {
-    mode: 'vertical',     // 'vertical' | 'rtl' | 'ltr'
-    fit: 'width',         // 'width' | 'screen'
-    gap: false,           // separacion en modo vertical
+    mode: 'vertical',     // 'vertical' (PDF continuo) | 'rtl' | 'ltr'
+    fit: 'width',         // 'width' (100% ancho del movil) | 'screen'
+    gap: false,           // false = 0px sin espacio entre paginas
     dim: 0,               // 0..70 filtro nocturno
     miniStatus: true      // indicador discreto en esquina
   };
@@ -117,7 +117,7 @@
   }
 
   function modeLabel(mode) {
-    if (mode === 'vertical') return 'Vertical';
+    if (mode === 'vertical') return 'Continuo (PDF)';
     if (mode === 'rtl') return 'Manga D→I';
     return 'Paginado I→D';
   }
@@ -648,7 +648,7 @@
         <div class="setting-group">
           <span class="setting-label">Modo de lectura por defecto</span>
           <div class="seg-control">
-            <button class="seg-btn ${p.mode === 'vertical' ? 'active' : ''}" data-pref-mode="vertical">Vertical</button>
+            <button class="seg-btn ${p.mode === 'vertical' ? 'active' : ''}" data-pref-mode="vertical">Continuo (PDF)</button>
             <button class="seg-btn ${p.mode === 'rtl' ? 'active' : ''}" data-pref-mode="rtl">Manga D→I</button>
             <button class="seg-btn ${p.mode === 'ltr' ? 'active' : ''}" data-pref-mode="ltr">Paginado I→D</button>
           </div>
@@ -657,16 +657,16 @@
         <div class="setting-group">
           <span class="setting-label">Ajuste de imagen</span>
           <div class="seg-control two">
-            <button class="seg-btn ${p.fit === 'width' ? 'active' : ''}" data-pref-fit="width">Ancho completo</button>
+            <button class="seg-btn ${p.fit === 'width' ? 'active' : ''}" data-pref-fit="width">Ancho del móvil</button>
             <button class="seg-btn ${p.fit === 'screen' ? 'active' : ''}" data-pref-fit="screen">Ajustar pantalla</button>
           </div>
         </div>
 
         <div class="setting-group">
-          <span class="setting-label">Separación entre páginas (modo vertical)</span>
+          <span class="setting-label">Espacio entre páginas</span>
           <div class="seg-control two">
-            <button class="seg-btn ${!p.gap ? 'active' : ''}" data-pref-gap="0">Sin huecos</button>
-            <button class="seg-btn ${p.gap ? 'active' : ''}" data-pref-gap="1">Separadas</button>
+            <button class="seg-btn ${!p.gap ? 'active' : ''}" data-pref-gap="0">Sin espacio (PDF)</button>
+            <button class="seg-btn ${p.gap ? 'active' : ''}" data-pref-gap="1">Con separación</button>
           </div>
         </div>
 
@@ -979,6 +979,14 @@
 
     syncProgressToServer(r.pageIdx);
 
+    // Precargar las siguientes 6 paginas en modo vertical para scroll fluido sin huecos
+    if (state.prefs.mode === 'vertical') {
+      for (let k = 1; k <= 6; k++) {
+        const nextImg = readerStage.querySelector(`.reader-page-slot[data-page="${r.pageIdx + k}"] img`);
+        if (nextImg && nextImg.loading === 'lazy') nextImg.loading = 'eager';
+      }
+    }
+
     // Precargar siguiente capítulo al llegar al 80%
     if (r.pageIdx >= Math.floor(r.pages.length * 0.8) && r.chapIdx < r.chapters.length - 1) {
       const nextChap = r.chapters[r.chapIdx + 1];
@@ -1054,7 +1062,7 @@
       slot.appendChild(loader);
 
       const img = createPageImg(url, idx);
-      img.loading = idx < 4 ? 'eager' : 'lazy';
+      img.loading = idx < 6 ? 'eager' : 'lazy';
       img.addEventListener('load', () => {
         loader.remove();
         slot.classList.add('loaded');
@@ -1287,7 +1295,7 @@
       <div class="setting-group">
         <span class="setting-label">Modo de lectura</span>
         <div class="seg-control">
-          <button class="seg-btn ${p.mode === 'vertical' ? 'active' : ''}" data-rmode="vertical">Vertical</button>
+          <button class="seg-btn ${p.mode === 'vertical' ? 'active' : ''}" data-rmode="vertical">Continuo (PDF)</button>
           <button class="seg-btn ${p.mode === 'rtl' ? 'active' : ''}" data-rmode="rtl">Manga D→I</button>
           <button class="seg-btn ${p.mode === 'ltr' ? 'active' : ''}" data-rmode="ltr">Paginado I→D</button>
         </div>
@@ -1296,16 +1304,16 @@
       <div class="setting-group">
         <span class="setting-label">Ajuste de imagen</span>
         <div class="seg-control two">
-          <button class="seg-btn ${p.fit === 'width' ? 'active' : ''}" data-rfit="width">Ancho completo</button>
+          <button class="seg-btn ${p.fit === 'width' ? 'active' : ''}" data-rfit="width">Ancho del móvil</button>
           <button class="seg-btn ${p.fit === 'screen' ? 'active' : ''}" data-rfit="screen">Ajustar pantalla</button>
         </div>
       </div>
 
       <div class="setting-group">
-        <span class="setting-label">Separación entre páginas (vertical)</span>
+        <span class="setting-label">Espacio entre páginas</span>
         <div class="seg-control two">
-          <button class="seg-btn ${!p.gap ? 'active' : ''}" data-rgap="0">Sin huecos</button>
-          <button class="seg-btn ${p.gap ? 'active' : ''}" data-rgap="1">Separadas</button>
+          <button class="seg-btn ${!p.gap ? 'active' : ''}" data-rgap="0">Sin espacio (PDF)</button>
+          <button class="seg-btn ${p.gap ? 'active' : ''}" data-rgap="1">Con separación</button>
         </div>
       </div>
 

@@ -560,46 +560,59 @@ button, input, select {
   background: #000;
 }
 
-/* Modo Vertical Continuo (Webtoon / Manga Dogs scroll) */
+/* Modo Vertical Continuo (tipo PDF / Webtoon sin huecos) */
 .reader-vertical-list {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  display: block;
   width: 100%;
   min-height: 100%;
+  margin: 0;
   padding: 0;
+  font-size: 0;
+  line-height: 0;
+  background: #000;
 }
 
-.reader-vertical-list.with-gap {
-  gap: 8px;
+.reader-vertical-list.with-gap .reader-page-slot {
+  margin-bottom: 8px;
 }
 
 .reader-page-slot {
   position: relative;
+  display: block;
   width: 100%;
-  min-height: 55vh;
+  margin: 0;
+  padding: 0;
+  font-size: 0;
+  line-height: 0;
+  background: #000;
+}
+
+.reader-page-slot:not(.loaded) {
+  min-height: 220px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #050507;
-}
-
-.reader-page-slot.loaded {
-  min-height: 0;
-  background: #000;
+  background: #07080c;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .reader-page-img {
   display: block;
   width: 100%;
-  height: auto;
   max-width: 100%;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  vertical-align: top;
 }
 
 .reader-vertical-list.fit-screen .reader-page-img {
   max-height: 100vh;
   width: auto;
   max-width: 100%;
+  margin: 0 auto;
   object-fit: contain;
 }
 
@@ -648,6 +661,8 @@ button, input, select {
   background: #0d1017;
   border-top: 1px solid var(--border);
   text-align: center;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 .reader-end-title {
