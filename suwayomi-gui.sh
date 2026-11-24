@@ -20,6 +20,23 @@ L_UPDATE="Actualizar Suwayomi"
 L_BACKUP="Copia de seguridad / Restaurar"
 L_SCAN="Escanear extensiones (VirusTotal)"
 L_AUTO="Inicio automático con macOS"
+L_AUTOOPEN_ON="Abrir navegador al encender: SÍ (pulsar para desactivar)"
+L_AUTOOPEN_OFF="Abrir navegador al encender: NO (pulsar para activar)"
+
+auto_open_enabled() {
+    [ ! -f "$DATA_DIR/no-auto-open-browser" ]
+}
+
+do_toggle_autoopen() {
+    mkdir -p "$DATA_DIR"
+    if auto_open_enabled; then
+        touch "$DATA_DIR/no-auto-open-browser"
+        ui_notify "Ya no se abrirá el navegador automáticamente al encender."
+    else
+        rm -f "$DATA_DIR/no-auto-open-browser"
+        ui_notify "Se volverá a abrir el navegador automáticamente al encender."
+    fi
+}
 
 q() { printf '%q' "$1"; }   # escapa una ruta para meterla en un comando
 
@@ -68,7 +85,9 @@ do_start() {
         i=0
         while [ $i -lt 45 ]; do
             if server_up; then
-                open "$SUWAYOMI_URL"
+                if auto_open_enabled; then
+                    open "$SUWAYOMI_URL"
+                fi
                 exit 0
             fi
             sleep 2
@@ -194,7 +213,12 @@ while true; do
         NOINST)   status="NO INSTALADO ⚪️"
                   items=("$L_INSTALL") ;;
     esac
-    items+=("$L_MOBILE" "$L_UPDATE" "$L_BACKUP" "$L_SCAN" "$L_AUTO" "$L_LOG" "$L_FOLDER" "$L_HIST")
+    if auto_open_enabled; then
+        L_AO="$L_AUTOOPEN_ON"
+    else
+        L_AO="$L_AUTOOPEN_OFF"
+    fi
+    items+=("$L_MOBILE" "$L_AO" "$L_UPDATE" "$L_BACKUP" "$L_SCAN" "$L_AUTO" "$L_LOG" "$L_FOLDER" "$L_HIST")
 
     if [ "$state" = NOINST ]; then
         hint="Bienvenido. Elige \"1. Instalar Suwayomi\" para empezar."
@@ -223,6 +247,7 @@ $hint" "${items[@]}")"
         "$L_BACKUP")  do_backup ;;
         "$L_SCAN")    do_scan ;;
         "$L_AUTO")    do_autostart ;;
+        "$L_AUTOOPEN_ON"|"$L_AUTOOPEN_OFF") do_toggle_autoopen ;;
     esac
     # Pequeña pausa para que el estado se actualice antes de volver a mostrar el menú
     sleep 1

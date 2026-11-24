@@ -10,11 +10,30 @@ $Url         = "http://localhost:$Port"
 $DataDir     = Join-Path $env:LOCALAPPDATA 'Tachidesk'
 $InstallRoot = Join-Path $env:USERPROFILE 'Suwayomi'
 $StartupFile = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\Suwayomi-AutoStart.bat'
+$PrefsFile   = Join-Path $DataDir 'gui-prefs.json'
 
-$script:Launcher  = $null
-$script:Starting  = $false
-$script:StartTime = Get-Date
-$script:AllowExit = $false
+$script:Launcher        = $null
+$script:Starting        = $false
+$script:StartTime       = Get-Date
+$script:AllowExit       = $false
+$script:AutoOpenBrowser = $true
+
+function Load-GuiPrefs {
+    if (Test-Path $PrefsFile) {
+        try {
+            $p = (Get-Content $PrefsFile -Raw) | ConvertFrom-Json
+            if ($null -ne $p.autoOpenBrowser) { $script:AutoOpenBrowser = [bool]$p.autoOpenBrowser }
+        } catch { }
+    }
+}
+
+function Save-GuiPrefs {
+    try {
+        New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+        @{ autoOpenBrowser = $script:AutoOpenBrowser } | ConvertTo-Json | Set-Content -Path $PrefsFile -Encoding ASCII
+    } catch { }
+}
+Load-GuiPrefs
 
 # ---------------- Funciones ----------------
 function Msg($text, $icon = 'Information') {
@@ -118,6 +137,16 @@ function Update-AutoStartLabel {
     }
 }
 
+function Update-AutoOpenLabel {
+    if ($script:AutoOpenBrowser) {
+        $btnAutoOpen.Text = 'Auto-abrir web: SI'
+        $btnAutoOpen.ForeColor = [System.Drawing.Color]::FromArgb(20, 120, 50)
+    } else {
+        $btnAutoOpen.Text = 'Auto-abrir web: NO'
+        $btnAutoOpen.ForeColor = [System.Drawing.Color]::FromArgb(140, 60, 60)
+    }
+}
+
 function Update-State {
     $script:Launcher = Get-Launcher
     $inst = [bool]$script:Launcher
@@ -125,8 +154,12 @@ function Update-State {
 
     if ($script:Starting -and $up) {
         $script:Starting = $false
-        Write-Log 'Servidor listo. Abriendo el navegador...'
-        Start-Process $Url
+        if ($script:AutoOpenBrowser) {
+            Write-Log 'Servidor listo. Abriendo el navegador...'
+            Start-Process $Url
+        } else {
+            Write-Log 'Servidor listo (auto-abrir navegador desactivado).'
+        }
     } elseif ($script:Starting -and ((Get-Date) - $script:StartTime).TotalSeconds -gt 90) {
         $script:Starting = $false
         Write-Log 'El servidor no respondio en 90 segundos. Pulsa "Ver registro" para ver el motivo.'
@@ -154,6 +187,7 @@ function Update-State {
     $btnAutoStart.Enabled = $inst
     $btnMobile.Enabled    = $inst
     Update-AutoStartLabel
+    Update-AutoOpenLabel
 }
 
 function New-Btn($text, $x, $y, $w, $h, $color) {
@@ -199,9 +233,10 @@ $red   = [System.Drawing.Color]::FromArgb(190, 40, 40)
 $blue  = [System.Drawing.Color]::FromArgb(30, 100, 190)
 
 New-Section 'USO DIARIO' 54
-$btnStart = New-Btn 'Encender'  20  74 225 46 $green
-$btnStop  = New-Btn 'Apagar'    255 74 225 46 $red
-$btnOpen  = New-Btn 'Abrir Suwayomi en el navegador' 20 126 460 40 $blue
+$btnStart    = New-Btn 'Encender'                      20  74 225 46 $green
+$btnStop     = New-Btn 'Apagar'                        255 74 225 46 $red
+$btnOpen     = New-Btn 'Abrir Suwayomi en navegador'   20  126 265 40 $blue
+$btnAutoOpen = New-Btn 'Auto-abrir web: SI'            295 126 185 40 $null
 
 New-Section 'PRIMERA VEZ' 176
 $btnInstall = New-Btn '1. Instalar Suwayomi'                 20  196 225 36 $null
@@ -220,6 +255,7 @@ New-Section 'ACCESO DESDE EL MOVIL (por datos o WiFi)' 386
 $btnMobile = New-Btn 'Acceso desde el movil (Tailscale + App)' 20 406 460 40 $blue
 
 $tip = New-Object System.Windows.Forms.ToolTip
+$tip.SetToolTip($btnAutoOpen, 'Elige si quieres que el navegador se abra automaticamente al pulsar Encender')
 $tip.SetToolTip($btnUpdate, 'Comprueba la ultima version oficial en GitHub y actualiza conservando tu biblioteca')
 $tip.SetToolTip($btnBackup, 'Crea o restaura copias de seguridad (database.mv.db y .tachibk para Mihon/Tachiyomi)')
 $tip.SetToolTip($btnHistory, 'Borra el historial de lectura (con copia de seguridad)')
@@ -270,6 +306,13 @@ $form.Add_Resize({
 $btnStart.Add_Click({ Start-SuwayomiNow })
 $btnStop.Add_Click({ Stop-SuwayomiNow })
 $btnOpen.Add_Click({ Start-Process $Url })
+$btnAutoOpen.Add_Click({
+    $script:AutoOpenBrowser = -not $script:AutoOpenBrowser
+    Save-GuiPrefs
+    Update-AutoOpenLabel
+    if ($script:AutoOpenBrowser) { Write-Log 'Al encender Suwayomi se abrira el navegador automaticamente.' }
+    else { Write-Log 'Al encender Suwayomi NO se abrira el navegador automaticamente.' }
+})
 
 $btnInstall.Add_Click({
     Write-Log 'Abriendo el instalador. Espera a que termine en la otra ventana.'

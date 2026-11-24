@@ -596,8 +596,9 @@
         const allSources = await ensureAllSourcesLoaded();
         const hiddenSources = allSources.filter((s) => hiddenSrcIds.includes(String(s.id)));
         bodyHtml = `
-          <div style="margin-bottom:12px">
-            <button id="vsManageBtn" class="primary-btn" type="button" style="background:#7c3aed">Elegir extensiones / fuentes ocultas (${hiddenSrcIds.length})</button>
+          <div style="display:flex;gap:8px;margin-bottom:12px">
+            <button id="vsInstallExtBtn" class="primary-btn" type="button" style="flex:1;background:#7c3aed;font-size:13px;padding:10px 8px">+ Instalar extensiones</button>
+            <button id="vsManageBtn" class="secondary-btn" type="button" style="flex:1;font-size:12.5px">Ocultar fuentes (${hiddenSrcIds.length})</button>
           </div>
           ${hiddenSources.length ? `<div class="list-stack">${hiddenSources.map((s) => `
             <div class="list-card" data-vsrc-id="${esc(s.id)}">
@@ -709,6 +710,8 @@
         });
         loadVaultSourcePage();
       } else {
+        const iBtn = $('vsInstallExtBtn');
+        if (iBtn) iBtn.addEventListener('click', () => openExtensionsManager(true));
         const mBtn = $('vsManageBtn');
         if (mBtn) mBtn.addEventListener('click', openVaultManageSources);
         vaultView.querySelectorAll('[data-vsrc-id]').forEach((card) => {
@@ -1216,6 +1219,228 @@
       }
     }
   `;
+
+  const Q_EXTENSIONS = `
+    query GetExtensions {
+      extensions {
+        nodes {
+          pkgName name lang versionName iconUrl isInstalled hasUpdate isObsolete
+        }
+      }
+    }
+  `;
+
+  const M_FETCH_EXTENSIONS = `
+    mutation FetchExtensions {
+      fetchExtensions(input: {}) {
+        extensions {
+          pkgName name lang versionName iconUrl isInstalled hasUpdate isObsolete
+        }
+      }
+    }
+  `;
+
+  const M_UPDATE_EXTENSION = `
+    mutation UpdateExtension($id: String!, $patch: UpdateExtensionPatchInput!) {
+      updateExtension(input: { id: $id, patch: $patch }) {
+        extension { pkgName isInstalled hasUpdate }
+      }
+    }
+  `;
+
+  const M_ADD_EXT_STORE = `
+    mutation AddExtStore($url: String!) {
+      addExtensionStore(input: { indexUrl: $url }) {
+        extensionStore { indexUrl name }
+      }
+    }
+  `;
+
+  // ---------------- Gestor de extensiones integrado (normal y bóveda oculta) ----------------
+  let cachedExtensions = [];
+  let extSearch = '';
+  let extFilter = 'all'; // 'all' | 'es' | 'en' | 'installed'
+
+  async function openExtensionsManager(forVault = false) {
+    if (state.offline) {
+      showToast('Conéctate al PC para instalar o gestionar extensiones.');
+      return;
+    }
+    openAppSheet(`
+      <div class="sheet-title">
+        <span>${forVault ? '🔒 Instalar extensiones (ocultas)' : 'Extensiones'}</span>
+        <button id="extCloseTmp" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      <div class="spinner"></div>
+      <p style="text-align:center;color:var(--muted);font-size:13px">Cargando catálogo de extensiones...</p>
+    `);
+    $('extCloseTmp').addEventListener('click', closeAppSheet);
+
+    try {
+      let data = await gql(Q_EXTENSIONS, {}, 12000);
+      let list = (data.extensions && data.extensions.nodes) || [];
+      if (!list.length) {
+        const fetched = await gql(M_FETCH_EXTENSIONS, {}, 25000);
+        list = (fetched.fetchExtensions && fetched.fetchExtensions.extensions) || [];
+      }
+      cachedExtensions = list;
+      drawExtensionsManager(forVault);
+    } catch (err) {
+      openAppSheet(`
+        <div class="sheet-title">
+          <span>Extensiones</span>
+          <button id="extErrClose" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+        </div>
+        <p style="color:var(--muted);font-size:13px">No se pudieron cargar las extensiones: ${esc(err.message || '')}</p>
+      `);
+      $('extErrClose').addEventListener('click', closeAppSheet);
+    }
+  }
+
+  function drawExtensionsManager(forVault = false) {
+    const q = extSearch.trim().toLowerCase();
+    const list = cachedExtensions
+      .filter((e) => {
+        if (extFilter === 'installed' && !e.isInstalled) return false;
+        if (extFilter === 'es' && (e.lang || '').toLowerCase() !== 'es') return false;
+        if (extFilter === 'en' && (e.lang || '').toLowerCase() !== 'en') return false;
+        if (q && !(e.name || '').toLowerCase().includes(q) && !(e.lang || '').toLowerCase().includes(q)) return false;
+        return true;
+      })
+      .sort((a, b) => Number(b.hasUpdate) - Number(a.hasUpdate) || Number(b.isInstalled) - Number(a.isInstalled) || (a.name || '').localeCompare(b.name || ''));
+
+    const shown = list.slice(0, 80);
+
+    openAppSheet(`
+      <div class="sheet-title">
+        <span>${forVault ? '🔒 Instalar extensiones (ocultas)' : 'Gestor de extensiones'}</span>
+        <button id="extClose" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      ${forVault ? '<p style="margin:0 0 8px;font-size:11.5px;color:#c4b5fd">Las extensiones que instales desde aquí se ocultarán automáticamente en tu bóveda.</p>' : ''}
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <div class="search-box" style="flex:1;padding:6px 10px">
+          <input id="extSearchInput" type="search" placeholder="Buscar extensión..." value="${esc(extSearch)}">
+        </div>
+        <button id="extRefreshBtn" class="secondary-btn" type="button" style="padding:6px 9px;font-size:12px" title="Actualizar catálogo">↻</button>
+        <button id="extAddRepoBtn" class="secondary-btn" type="button" style="padding:6px 9px;font-size:12px">+ Repo</button>
+      </div>
+      <div class="chips-row" style="margin-bottom:8px">
+        <button class="chip ${extFilter === 'all' ? 'active' : ''}" data-ef="all">Todas (${cachedExtensions.length})</button>
+        <button class="chip ${extFilter === 'es' ? 'active' : ''}" data-ef="es">ES</button>
+        <button class="chip ${extFilter === 'en' ? 'active' : ''}" data-ef="en">EN</button>
+        <button class="chip ${extFilter === 'installed' ? 'active' : ''}" data-ef="installed">Instaladas</button>
+      </div>
+      <div id="extListBody">
+        ${shown.length ? shown.map((e) => {
+          const btnTxt = e.hasUpdate ? 'Actualizar' : (e.isInstalled ? 'Quitar' : 'Instalar');
+          const act = e.hasUpdate ? 'update' : (e.isInstalled ? 'uninstall' : 'install');
+          const style = act === 'uninstall'
+            ? 'padding:6px 10px;font-size:11.5px;color:#ff8690;border-color:rgba(255,77,90,0.35)'
+            : (act === 'update' ? 'padding:6px 10px;font-size:11.5px;background:var(--green);color:#062111;border:0' : 'padding:6px 10px;font-size:11.5px;background:var(--accent);color:#fff;border:0');
+          return `
+            <div class="dl-storage-row">
+              <img src="${esc(e.iconUrl || '')}" alt="" style="width:32px;height:32px;border-radius:7px;background:#1d2230;flex:0 0 auto" loading="lazy">
+              <div style="min-width:0;flex:1">
+                <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(e.name)}</div>
+                <div style="font-size:11px;color:var(--muted)">${esc((e.lang || '').toUpperCase())} · v${esc(e.versionName || '')}</div>
+              </div>
+              <button class="secondary-btn" data-ext-pkg="${esc(e.pkgName)}" data-ext-act="${act}" type="button" style="${style}">${btnTxt}</button>
+            </div>
+          `;
+        }).join('') : '<p style="color:var(--muted);font-size:13px;text-align:center;padding:18px 0">No hay extensiones. Pulsa "+ Repo" para añadir el repositorio Keiyoushi o uno personalizado.</p>'}
+        ${list.length > shown.length ? `<p style="font-size:11.5px;color:var(--muted);text-align:center">Mostrando ${shown.length} de ${list.length}. Usa el buscador para filtrar.</p>` : ''}
+      </div>
+    `);
+
+    $('extClose').addEventListener('click', closeAppSheet);
+    $('extSearchInput').addEventListener('input', (ev) => {
+      extSearch = ev.target.value;
+      drawExtensionsManager(forVault);
+      const inp = $('extSearchInput');
+      if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+    });
+    appSheet.querySelectorAll('[data-ef]').forEach((ch) => {
+      ch.addEventListener('click', () => { extFilter = ch.dataset.ef; drawExtensionsManager(forVault); });
+    });
+    $('extRefreshBtn').addEventListener('click', async () => {
+      showToast('Actualizando lista de extensiones...');
+      try {
+        const fetched = await gql(M_FETCH_EXTENSIONS, {}, 30000);
+        cachedExtensions = (fetched.fetchExtensions && fetched.fetchExtensions.extensions) || cachedExtensions;
+        drawExtensionsManager(forVault);
+      } catch {
+        showToast('Error actualizando extensiones');
+      }
+    });
+    $('extAddRepoBtn').addEventListener('click', async () => {
+      const defUrl = 'https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json';
+      const url = prompt('Pega la URL del repositorio de extensiones (index.min.json):', defUrl);
+      if (!url || !url.trim()) return;
+      try {
+        showToast('Añadiendo repositorio...');
+        await gql(M_ADD_EXT_STORE, { url: url.trim() }, 15000);
+        const fetched = await gql(M_FETCH_EXTENSIONS, {}, 30000);
+        cachedExtensions = (fetched.fetchExtensions && fetched.fetchExtensions.extensions) || cachedExtensions;
+        showToast('Repositorio añadido');
+        drawExtensionsManager(forVault);
+      } catch (err) {
+        showToast('Error añadiendo repo: ' + (err.message || ''));
+      }
+    });
+
+    appSheet.querySelectorAll('[data-ext-pkg]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const pkg = btn.dataset.extPkg;
+        const act = btn.dataset.extAct;
+        btn.disabled = true;
+        btn.textContent = '...';
+
+        // Capturar fuentes actuales antes de instalar para auto-ocultar las nuevas si estamos en bóveda
+        let beforeIds = new Set();
+        if (forVault && act === 'install') {
+          const prev = await ensureAllSourcesLoaded();
+          beforeIds = new Set(prev.map((s) => String(s.id)));
+        }
+
+        try {
+          const patch = {};
+          patch[act] = true;
+          await gql(M_UPDATE_EXTENSION, { id: pkg, patch }, 30000);
+
+          const extObj = cachedExtensions.find((x) => x.pkgName === pkg);
+          if (extObj) {
+            if (act === 'install') extObj.isInstalled = true;
+            if (act === 'uninstall') { extObj.isInstalled = false; extObj.hasUpdate = false; }
+            if (act === 'update') extObj.hasUpdate = false;
+          }
+
+          // Refrescar lista de fuentes inmediatamente
+          state.sources = [];
+          const freshSources = await ensureAllSourcesLoaded();
+          if (forVault && act === 'install' && Extras) {
+            let added = 0;
+            for (const s of freshSources) {
+              if (!beforeIds.has(String(s.id)) && !Extras.isSourceHidden(s.id)) {
+                Extras.toggleSourceHidden(s.id);
+                added += 1;
+              }
+            }
+            showToast(added > 0 ? `Extensión instalada y oculta en bóveda (${added} fuente(s))` : 'Extensión instalada');
+          } else {
+            showToast(act === 'uninstall' ? 'Extensión desinstalada' : 'Extensión instalada');
+          }
+
+          drawExtensionsManager(forVault);
+          if (state.vaultOpen) renderVault();
+          else if (state.tab === 'explore') renderExplore();
+        } catch (err) {
+          showToast('Error: ' + (err.message || 'no se pudo completar'));
+          btn.disabled = false;
+          drawExtensionsManager(forVault);
+        }
+      });
+    });
+  }
 
   // ---------------- Enrutado ----------------
   function navigateHash(hash) {
@@ -1786,7 +2011,9 @@
     headerTitle.textContent = 'Explorar';
     headerActions.innerHTML = state.offline
       ? ''
-      : '<a href="/" class="secondary-btn" style="text-decoration:none;padding:6px 10px;font-size:12px">Extensiones</a>';
+      : '<button id="expExtBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">+ Extensiones</button>';
+    const expExtBtn = $('expExtBtn');
+    if (expExtBtn) expExtBtn.addEventListener('click', () => openExtensionsManager(false));
     headerSub.classList.add('hidden');
     mainContent.innerHTML = '<div class="spinner"></div>';
 
@@ -1817,10 +2044,11 @@
       mainContent.innerHTML = `
         <div class="empty-state">
           <h3>No hay fuentes visibles</h3>
-          <p>Instala alguna extensión desde el Suwayomi completo para explorar mangas desde aquí.</p>
-          <a href="/" class="primary-btn" style="display:inline-block;max-width:240px;text-decoration:none">Abrir Suwayomi completo</a>
+          <p>Instala extensiones directamente desde aquí sin tener que abrir Suwayomi en el PC.</p>
+          <button id="expEmptyExtBtn" class="primary-btn" type="button" style="max-width:240px">Instalar extensiones</button>
         </div>
       `;
+      $('expEmptyExtBtn').addEventListener('click', () => openExtensionsManager(false));
       return;
     }
 
