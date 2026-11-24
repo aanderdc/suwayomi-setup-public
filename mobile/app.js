@@ -65,6 +65,16 @@
     mangaChapters: [],
     chapterFilter: 'all', // 'all' | 'unread' | 'downloaded' | 'bookmarked'
     chapterDesc: true,
+    // Bóveda oculta (incógnito)
+    vaultOpen: false,
+    vaultTab: 'mangas', // 'mangas' | 'sources' | 'options'
+    vaultActiveSource: null,
+    vaultSourceMode: 'POPULAR',
+    vaultSourceQuery: '',
+    vaultSourcePage: 1,
+    vaultSourceHasNext: false,
+    vaultSourceMangas: [],
+    vaultSearch: '',
     // Lector
     reader: {
       open: false,
@@ -99,6 +109,7 @@
   const headerSub = $('headerSub');
   const mainContent = $('mainContent');
   const bottomNav = $('bottomNav');
+  const vaultView = $('vaultView');
   const mangaView = $('mangaView');
   const appSheetBackdrop = $('appSheetBackdrop');
   const appSheet = $('appSheet');
@@ -133,6 +144,7 @@
   const pinDots = $('pinDots');
   const pinErr = $('pinErr');
   const pinPad = $('pinPad');
+  const pinCancelBtn = $('pinCancelBtn');
 
   // ---------------- Bloqueo con PIN ----------------
   let pinBuffer = '';
@@ -143,11 +155,12 @@
     spans.forEach((sp, i) => sp.classList.toggle('filled', i < pinBuffer.length));
   }
 
-  function showPinPrompt(titleText, onDone) {
+  function showPinPrompt(titleText, onDone, cancellable = false) {
     pinBuffer = '';
     pinCallback = onDone;
     pinTitle.textContent = titleText || 'Introduce tu PIN';
     pinErr.textContent = '';
+    if (pinCancelBtn) pinCancelBtn.classList.toggle('hidden', !cancellable);
     renderPinDots();
     pinLockOverlay.classList.remove('hidden');
   }
@@ -155,8 +168,11 @@
   function hidePinPrompt() {
     pinBuffer = '';
     pinCallback = null;
+    if (pinCancelBtn) pinCancelBtn.classList.add('hidden');
     pinLockOverlay.classList.add('hidden');
   }
+
+  if (pinCancelBtn) pinCancelBtn.addEventListener('click', hidePinPrompt);
 
   pinPad.addEventListener('click', async (e) => {
     const btn = e.target.closest('button[data-pin]');
@@ -351,6 +367,448 @@
     appSheet.classList.add('hidden');
   }
   appSheetBackdrop.addEventListener('click', closeAppSheet);
+
+  function isMangaSecret(manga) {
+    if (!Extras || !manga) return false;
+    return Extras.isMangaHidden(manga.id) || (manga.sourceId && Extras.isSourceHidden(manga.sourceId));
+  }
+
+  function isIncognitoManga(manga) {
+    if (!Extras || !manga) return false;
+    return Extras.isVaultIncognito() && (state.vaultOpen || isMangaSecret(manga));
+  }
+
+  // Gesto discreto: 5 toques rápidos en el título "Biblioteca" abren la bóveda oculta
+  let vaultTapCount = 0;
+  let vaultTapReset = null;
+  headerTitle.addEventListener('click', () => {
+    if (state.tab !== 'library') return;
+    vaultTapCount += 1;
+    clearTimeout(vaultTapReset);
+    vaultTapReset = setTimeout(() => { vaultTapCount = 0; }, 1600);
+    if (vaultTapCount >= 5) {
+      vaultTapCount = 0;
+      requestOpenVault();
+    }
+  });
+
+  // Auto-bloquear bóveda si la app pasa a segundo plano más de 30s
+  let vaultHideTimer = null;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && state.vaultOpen) {
+      vaultHideTimer = setTimeout(() => lockVault(true), 30000);
+    } else if (document.visibilityState === 'visible' && vaultHideTimer) {
+      clearTimeout(vaultHideTimer);
+      vaultHideTimer = null;
+    }
+  });
+
+  function requestOpenVault() {
+    if (!Extras) return;
+    if (Extras.isVaultUnlocked()) {
+      openVault();
+      return;
+    }
+    if (!Extras.hasVaultPin()) {
+      showPinPrompt('Crea un PIN (4 dígitos) para tu bóveda oculta', async (first) => {
+        showPinPrompt('Repite el PIN de tu bóveda', async (second) => {
+          if (first === second) {
+            await Extras.setVaultPin(first);
+            hidePinPrompt();
+            showToast('Bóveda oculta creada');
+            openVault();
+          } else {
+            pinBuffer = '';
+            pinErr.textContent = 'No coinciden, inténtalo de nuevo';
+            renderPinDots();
+          }
+        }, true);
+      }, true);
+      return;
+    }
+    showPinPrompt('PIN de la bóveda oculta', async (code) => {
+      if (await Extras.verifyVaultPin(code)) {
+        Extras.unlockVaultSession();
+        hidePinPrompt();
+        openVault();
+      } else {
+        pinBuffer = '';
+        pinErr.textContent = 'PIN incorrecto';
+        renderPinDots();
+      }
+    }, true);
+  }
+
+  async function openVault() {
+    state.vaultOpen = true;
+    state.vaultActiveSource = null;
+    vaultView.classList.remove('hidden');
+    await refreshDownloadsIndex();
+    renderVault();
+  }
+
+  function lockVault(silent = false) {
+    state.vaultOpen = false;
+    state.vaultActiveSource = null;
+    if (Extras) Extras.lockVaultSession();
+    vaultView.classList.add('hidden');
+    if (state.reader.open && isMangaSecret(state.reader.manga)) {
+      closeReaderUi();
+      navigateHash('#library');
+    } else if (!mangaView.classList.contains('hidden') && isMangaSecret(state.manga)) {
+      mangaView.classList.add('hidden');
+      navigateHash('#library');
+    } else {
+      renderCurrentTab();
+    }
+    if (!silent) showToast('Bóveda bloqueada');
+  }
+
+  async function ensureAllSourcesLoaded() {
+    if (state.sources.length) return state.sources;
+    try {
+      const d = await gql(Q_SOURCES, {}, 7000);
+      state.sources = ((d.sources && d.sources.nodes) || [])
+        .sort((a, b) => (a.lang || '').localeCompare(b.lang || '') || (a.name || '').localeCompare(b.name || ''));
+    } catch { }
+    return state.sources;
+  }
+
+  function openVaultPickFromLibrary() {
+    const visibleLib = state.library.filter((m) => !isMangaSecret(m));
+    openAppSheet(`
+      <div class="sheet-title">
+        <span>Ocultar manga de tu biblioteca</span>
+        <button id="vpClose" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      <p style="margin:0 0 10px;font-size:12px;color:var(--muted)">
+        El manga desaparecerá de Biblioteca, Novedades y Recientes normales y solo se verá aquí.
+      </p>
+      ${visibleLib.length ? visibleLib.map((m) => `
+        <div class="dl-storage-row">
+          <div style="min-width:0;flex:1">
+            <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.title)}</div>
+          </div>
+          <button class="secondary-btn" data-vp-add="${m.id}" type="button" style="padding:6px 10px;font-size:12px">Ocultar</button>
+        </div>
+      `).join('') : '<p style="color:var(--muted);font-size:13px">No hay mangas disponibles en tu biblioteca normal.</p>'}
+    `);
+    $('vpClose').addEventListener('click', closeAppSheet);
+    appSheet.querySelectorAll('[data-vp-add]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const m = state.library.find((x) => x.id === Number(b.dataset.vpAdd));
+        if (!m) return;
+        Extras.addMangaToVault(m);
+        if (Offline && m.thumbnailUrl) Offline.cacheCover(m.id, m.thumbnailUrl);
+        if (!state.offline && confirm(`¿Quitar "${m.title}" también de la biblioteca del PC para que no aparezca en el navegador del PC?`)) {
+          try { await gql(M_UPDATE_MANGA, { id: m.id, inLibrary: false }); } catch { }
+        }
+        showToast(`"${m.title}" movido a la bóveda`);
+        closeAppSheet();
+        renderVault();
+      });
+    });
+  }
+
+  async function openVaultManageSources() {
+    openAppSheet('<div class="spinner"></div>');
+    const all = await ensureAllSourcesLoaded();
+    openAppSheet(`
+      <div class="sheet-title">
+        <span>Extensiones / fuentes ocultas</span>
+        <button id="vsClose" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      <p style="margin:0 0 10px;font-size:12px;color:var(--muted)">
+        Las fuentes marcadas desaparecerán de Explorar, Búsqueda global y Migrar normales, y solo estarán disponibles dentro de la bóveda.
+      </p>
+      ${all.length ? all.map((s) => `
+        <label class="dl-storage-row" style="cursor:pointer">
+          <div style="min-width:0;flex:1">
+            <div style="font-size:13px;font-weight:600">${esc(s.name)}</div>
+            <div style="font-size:11px;color:var(--muted)">${esc((s.lang || '').toUpperCase())}</div>
+          </div>
+          <input type="checkbox" data-vs-toggle="${esc(s.id)}" ${Extras.isSourceHidden(s.id) ? 'checked' : ''} style="width:18px;height:18px;accent-color:#a78bfa">
+        </label>
+      `).join('') : '<p style="color:var(--muted);font-size:13px">No hay fuentes cargadas (conéctate al PC).</p>'}
+    `);
+    $('vsClose').addEventListener('click', () => { closeAppSheet(); renderVault(); });
+    appSheet.querySelectorAll('[data-vs-toggle]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        Extras.toggleSourceHidden(cb.dataset.vsToggle);
+      });
+    });
+  }
+
+  async function renderVault() {
+    if (!state.vaultOpen) return;
+    const hiddenMangas = Extras.getHiddenMangaList();
+    const hiddenSrcIds = Extras.getHiddenSourceIds();
+    const incognito = Extras.isVaultIncognito();
+
+    let bodyHtml = '';
+    if (state.vaultTab === 'mangas') {
+      const q = state.vaultSearch.trim().toLowerCase();
+      const filtered = hiddenMangas.filter((m) => !q || (m.title || '').toLowerCase().includes(q));
+      bodyHtml = `
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <div class="search-box" style="flex:1">
+            <input id="vaultSearchInput" type="search" placeholder="Buscar en la bóveda..." value="${esc(state.vaultSearch)}">
+          </div>
+          <button id="vaultAddLibBtn" class="secondary-btn" type="button" style="padding:8px 10px;font-size:12px">+ Ocultar</button>
+        </div>
+        ${filtered.length ? `<div class="manga-grid">${filtered.map((m) => {
+          const dl = mangaDownloadCount(m.id);
+          return `
+            <div class="manga-card ${state.offline && dl === 0 ? 'offline-dim' : ''}" data-vmanga-id="${m.id}">
+              <div class="manga-cover-wrap">
+                <img src="${esc(coverUrlFor(m))}" data-cover-id="${m.id}" alt="" loading="lazy">
+                <div class="manga-cover-grad"></div>
+                ${dl > 0 ? `<span class="manga-dl-badge">↓ ${dl}</span>` : ''}
+                <div class="manga-card-title">${esc(m.title)}</div>
+              </div>
+            </div>
+          `;
+        }).join('')}</div>` : `
+          <div class="empty-state">
+            <h3>Bóveda vacía</h3>
+            <p>Pulsa "+ Ocultar" para mover un manga de tu biblioteca, o ve a la pestaña "Fuentes" para ocultar extensiones y añadir mangas directamente sin dejar rastro en el PC.</p>
+          </div>
+        `}
+      `;
+    } else if (state.vaultTab === 'sources') {
+      if (state.vaultActiveSource) {
+        const src = state.vaultActiveSource;
+        bodyHtml = `
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <strong style="color:#e9d5ff">${esc(src.name)}</strong>
+            <button id="vsBackBtn" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">‹ Fuentes ocultas</button>
+          </div>
+          <form id="vsSearchForm" class="search-box" style="margin-bottom:10px">
+            <input id="vsSearchInput" type="search" placeholder="Buscar en ${esc(src.name)}..." value="${esc(state.vaultSourceQuery)}">
+          </form>
+          <div class="chips-row" style="margin-bottom:10px">
+            <button class="chip ${state.vaultSourceMode === 'POPULAR' ? 'active' : ''}" data-vsmode="POPULAR">Populares</button>
+            ${src.supportsLatest ? `<button class="chip ${state.vaultSourceMode === 'LATEST' ? 'active' : ''}" data-vsmode="LATEST">Últimos</button>` : ''}
+          </div>
+          <div id="vaultSourceGridWrap"><div class="spinner"></div></div>
+        `;
+      } else {
+        const allSources = await ensureAllSourcesLoaded();
+        const hiddenSources = allSources.filter((s) => hiddenSrcIds.includes(String(s.id)));
+        bodyHtml = `
+          <div style="margin-bottom:12px">
+            <button id="vsManageBtn" class="primary-btn" type="button" style="background:#7c3aed">Elegir extensiones / fuentes ocultas (${hiddenSrcIds.length})</button>
+          </div>
+          ${hiddenSources.length ? `<div class="list-stack">${hiddenSources.map((s) => `
+            <div class="list-card" data-vsrc-id="${esc(s.id)}">
+              <img class="source-icon" src="${esc(s.iconUrl || '')}" alt="" loading="lazy">
+              <div class="list-body">
+                <div class="list-title">${esc(s.name)}</div>
+                <div class="list-sub">Fuente oculta · ${esc((s.lang || '').toUpperCase())}</div>
+              </div>
+              <span style="color:#c4b5fd;font-size:18px">›</span>
+            </div>
+          `).join('')}</div>` : `
+            <div class="empty-state">
+              <h3>Sin fuentes ocultas</h3>
+              <p>Pulsa el botón superior para marcar qué extensiones quieres ocultar del Explorador normal y usar solo aquí dentro.</p>
+            </div>
+          `}
+        `;
+      }
+    } else {
+      const allDl = Offline ? await Offline.listDownloads() : [];
+      const secretDl = allDl.filter((d) => Extras.isMangaHidden(d.mangaId));
+      const secretBytes = secretDl.reduce((acc, d) => acc + (d.bytes || 0), 0);
+      bodyHtml = `
+        <div class="settings-card">
+          <div class="setting-group">
+            <span class="setting-label">Modo incógnito (no guardar historial ni progreso en el PC)</span>
+            <div class="seg-control two">
+              <button class="seg-btn ${incognito ? 'active' : ''}" data-vinc="1">Activado (sin rastro)</button>
+              <button class="seg-btn ${!incognito ? 'active' : ''}" data-vinc="0">Sincronizar con PC</button>
+            </div>
+          </div>
+          <p style="margin:0;font-size:12px;color:var(--muted);line-height:1.4">
+            Con el modo incógnito activado, leer mangas de la bóveda guarda tu progreso solo dentro de esta bóveda y <strong>no aparece en el historial de Suwayomi en tu PC</strong>.
+          </p>
+        </div>
+
+        <div class="settings-card">
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">Descargas ocultas</div>
+          <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">
+            ${secretDl.length} capítulo(s) descargados · ${Offline ? Offline.formatBytes(secretBytes) : '0 B'} (ocultos de los ajustes normales).
+          </div>
+          ${secretDl.length ? '<button id="vaultDelDlBtn" class="secondary-btn" type="button" style="width:100%;color:#ff8690;border-color:rgba(255,77,90,0.35)">Borrar descargas ocultas</button>' : ''}
+        </div>
+
+        <div class="settings-card">
+          <div style="font-size:14px;font-weight:700;margin-bottom:8px">Seguridad de la bóveda</div>
+          <p style="margin:0 0 10px;font-size:12px;color:var(--muted)">
+            Truco de acceso rápido: toca <strong>5 veces</strong> en el título <strong>"Biblioteca"</strong> para abrir esta bóveda sin dejar iconos visibles.
+          </p>
+          <button id="vaultChPinBtn" class="secondary-btn" type="button" style="width:100%;margin-bottom:8px">Cambiar PIN de bóveda</button>
+          <button id="vaultClearAllBtn" class="secondary-btn" type="button" style="width:100%;color:#ff8690;border-color:rgba(255,77,90,0.35)">Vaciar bóveda (mostrar todo de nuevo)</button>
+        </div>
+      `;
+    }
+
+    vaultView.innerHTML = `
+      <div class="vault-header">
+        <div class="vault-title-row">
+          <h2 class="vault-title">🔒 Bóveda oculta</h2>
+          <button id="vaultLockBtn" class="secondary-btn" type="button" style="padding:6px 11px;font-size:12px;border-color:rgba(167,139,250,0.5)">Bloquear</button>
+        </div>
+        <div class="vault-tabs">
+          <button class="vault-tab-btn ${state.vaultTab === 'mangas' ? 'active' : ''}" data-vtab="mangas" type="button">Mangas (${hiddenMangas.length})</button>
+          <button class="vault-tab-btn ${state.vaultTab === 'sources' ? 'active' : ''}" data-vtab="sources" type="button">Fuentes (${hiddenSrcIds.length})</button>
+          <button class="vault-tab-btn ${state.vaultTab === 'options' ? 'active' : ''}" data-vtab="options" type="button">Opciones</button>
+        </div>
+      </div>
+      <div class="vault-body">${bodyHtml}</div>
+    `;
+
+    attachCoverFallbacks(vaultView);
+    $('vaultLockBtn').addEventListener('click', () => lockVault(false));
+    vaultView.querySelectorAll('[data-vtab]').forEach((b) => {
+      b.addEventListener('click', () => {
+        state.vaultTab = b.dataset.vtab;
+        state.vaultActiveSource = null;
+        renderVault();
+      });
+    });
+
+    if (state.vaultTab === 'mangas') {
+      const inp = $('vaultSearchInput');
+      if (inp) inp.addEventListener('input', (e) => { state.vaultSearch = e.target.value; renderVault(); });
+      const addBtn = $('vaultAddLibBtn');
+      if (addBtn) addBtn.addEventListener('click', openVaultPickFromLibrary);
+      vaultView.querySelectorAll('[data-vmanga-id]').forEach((card) => {
+        card.addEventListener('click', () => navigateHash('#manga/' + card.dataset.vmangaId));
+      });
+    } else if (state.vaultTab === 'sources') {
+      if (state.vaultActiveSource) {
+        $('vsBackBtn').addEventListener('click', () => { state.vaultActiveSource = null; renderVault(); });
+        $('vsSearchForm').addEventListener('submit', (e) => {
+          e.preventDefault();
+          const q = $('vsSearchInput').value.trim();
+          state.vaultSourceQuery = q;
+          state.vaultSourceMode = q ? 'SEARCH' : 'POPULAR';
+          state.vaultSourcePage = 1;
+          state.vaultSourceMangas = [];
+          loadVaultSourcePage();
+        });
+        vaultView.querySelectorAll('[data-vsmode]').forEach((ch) => {
+          ch.addEventListener('click', () => {
+            state.vaultSourceMode = ch.dataset.vsmode;
+            state.vaultSourceQuery = '';
+            state.vaultSourcePage = 1;
+            state.vaultSourceMangas = [];
+            renderVault();
+          });
+        });
+        loadVaultSourcePage();
+      } else {
+        const mBtn = $('vsManageBtn');
+        if (mBtn) mBtn.addEventListener('click', openVaultManageSources);
+        vaultView.querySelectorAll('[data-vsrc-id]').forEach((card) => {
+          card.addEventListener('click', () => {
+            const s = state.sources.find((x) => String(x.id) === String(card.dataset.vsrcId));
+            if (!s) return;
+            state.vaultActiveSource = s;
+            state.vaultSourceMode = 'POPULAR';
+            state.vaultSourceQuery = '';
+            state.vaultSourcePage = 1;
+            state.vaultSourceMangas = [];
+            renderVault();
+          });
+        });
+      }
+    } else {
+      vaultView.querySelectorAll('[data-vinc]').forEach((b) => {
+        b.addEventListener('click', () => { Extras.setVaultIncognito(b.dataset.vinc === '1'); renderVault(); });
+      });
+      const delDl = $('vaultDelDlBtn');
+      if (delDl) {
+        delDl.addEventListener('click', async () => {
+          if (!confirm('¿Borrar todas las descargas de los mangas ocultos?')) return;
+          const allDl = await Offline.listDownloads();
+          for (const d of allDl) {
+            if (Extras.isMangaHidden(d.mangaId)) await Offline.deleteDownload(d.chapterId);
+          }
+          await refreshDownloadsIndex();
+          showToast('Descargas ocultas borradas');
+          renderVault();
+        });
+      }
+      $('vaultChPinBtn').addEventListener('click', () => {
+        showPinPrompt('Nuevo PIN (4 dígitos) para bóveda', async (first) => {
+          showPinPrompt('Repite el nuevo PIN', async (second) => {
+            if (first === second) {
+              await Extras.setVaultPin(first);
+              hidePinPrompt();
+              showToast('PIN de bóveda actualizado');
+            } else {
+              pinBuffer = '';
+              pinErr.textContent = 'No coinciden';
+              renderPinDots();
+            }
+          }, true);
+        }, true);
+      });
+      $('vaultClearAllBtn').addEventListener('click', () => {
+        if (!confirm('¿Vaciar la lista de mangas y fuentes ocultas? (No borra nada del servidor).')) return;
+        Extras.clearVaultAll();
+        showToast('Bóveda vaciada');
+        renderVault();
+      });
+    }
+  }
+
+  async function loadVaultSourcePage() {
+    const wrap = $('vaultSourceGridWrap');
+    if (!wrap || !state.vaultActiveSource) return;
+    if (state.vaultSourcePage === 1) wrap.innerHTML = '<div class="spinner"></div>';
+    try {
+      const input = {
+        source: String(state.vaultActiveSource.id),
+        type: state.vaultSourceMode,
+        page: state.vaultSourcePage
+      };
+      if (state.vaultSourceMode === 'SEARCH') input.query = state.vaultSourceQuery;
+      const data = await gql(M_SOURCE_MANGAS, { input });
+      const res = data.fetchSourceManga || { mangas: [], hasNextPage: false };
+      state.vaultSourceHasNext = !!res.hasNextPage;
+      state.vaultSourceMangas = state.vaultSourcePage === 1 ? res.mangas : state.vaultSourceMangas.concat(res.mangas);
+      wrap.innerHTML = state.vaultSourceMangas.length ? `
+        <div class="manga-grid">${state.vaultSourceMangas.map((m) => `
+          <div class="manga-card" data-vs-manga="${m.id}">
+            <div class="manga-cover-wrap">
+              <img src="${esc(m.thumbnailUrl || '')}" alt="" loading="lazy">
+              <div class="manga-cover-grad"></div>
+              ${Extras.isMangaHidden(m.id) ? '<span class="manga-badge" style="background:#7c3aed">En bóveda</span>' : ''}
+              <div class="manga-card-title">${esc(m.title)}</div>
+            </div>
+          </div>
+        `).join('')}</div>
+        ${state.vaultSourceHasNext ? '<div style="margin-top:12px"><button id="vsMoreBtn" class="secondary-btn" style="width:100%">Cargar más</button></div>' : ''}
+      ` : '<div class="empty-state"><p>Sin resultados.</p></div>';
+
+      wrap.querySelectorAll('[data-vs-manga]').forEach((c) => {
+        c.addEventListener('click', () => navigateHash('#manga/' + c.dataset.vsManga));
+      });
+      const more = $('vsMoreBtn');
+      if (more) {
+        more.addEventListener('click', () => {
+          more.disabled = true;
+          state.vaultSourcePage += 1;
+          loadVaultSourcePage();
+        });
+      }
+    } catch {
+      wrap.innerHTML = '<div class="empty-state"><p>Sin conexión con el PC para explorar esta fuente.</p></div>';
+    }
+  }
 
   function setOfflineMode(isOff) {
     const wasOff = state.offline;
@@ -612,7 +1070,7 @@
       }
       mangas(condition: { inLibrary: true }, order: [{ by: TITLE, byType: ASC }]) {
         nodes {
-          id title thumbnailUrl inLibrary inLibraryAt unreadCount
+          id title thumbnailUrl inLibrary inLibraryAt unreadCount sourceId
           categories { nodes { id name } }
           firstUnreadChapter { id name chapterNumber sourceOrder }
           lastReadChapter { id name chapterNumber sourceOrder lastReadAt lastPageRead }
@@ -630,7 +1088,7 @@
       ) {
         nodes {
           id name chapterNumber mangaId fetchedAt uploadDate isRead lastPageRead pageCount
-          manga { id title thumbnailUrl inLibrary }
+          manga { id title thumbnailUrl inLibrary sourceId }
         }
       }
     }
@@ -645,7 +1103,7 @@
       ) {
         nodes {
           id name chapterNumber mangaId lastReadAt lastPageRead pageCount isRead
-          manga { id title thumbnailUrl unreadCount }
+          manga { id title thumbnailUrl unreadCount sourceId }
         }
       }
     }
@@ -792,6 +1250,7 @@
       }
     } else {
       mangaView.classList.add('hidden');
+      if (state.vaultOpen) renderVault();
     }
 
     const validTabs = ['library', 'updates', 'recent', 'explore', 'settings'];
@@ -921,8 +1380,9 @@
     }
 
     headerSub.classList.remove('hidden');
+    const visibleAll = state.library.filter((m) => !isMangaSecret(m));
     const usedCats = state.categories.filter((c) => c.id !== 0);
-    const dlMangasCount = state.library.filter((m) => mangaDownloadCount(m.id) > 0).length;
+    const dlMangasCount = visibleAll.filter((m) => mangaDownloadCount(m.id) > 0).length;
 
     headerSub.innerHTML = `
       <div style="display:flex;gap:8px;align-items:center">
@@ -939,7 +1399,7 @@
       </div>
       <div class="chips-row">
         <button class="chip ${state.onlyDownloaded ? 'active' : ''}" id="chipOnlyDl">↓ Descargados (${dlMangasCount})</button>
-        <button class="chip ${!state.onlyDownloaded && state.selectedCat === 'all' ? 'active' : ''}" data-cat="all">Todos (${state.library.length})</button>
+        <button class="chip ${!state.onlyDownloaded && state.selectedCat === 'all' ? 'active' : ''}" data-cat="all">Todos (${visibleAll.length})</button>
         ${usedCats.map((c) => `<button class="chip ${!state.onlyDownloaded && String(state.selectedCat) === String(c.id) ? 'active' : ''}" data-cat="${c.id}">${esc(c.name)}</button>`).join('')}
       </div>
     `;
@@ -970,6 +1430,7 @@
   function drawLibraryGrid() {
     const q = state.librarySearch.trim().toLowerCase();
     let list = state.library.filter((m) => {
+      if (isMangaSecret(m)) return false;
       if (q && !m.title.toLowerCase().includes(q)) return false;
       if (state.onlyDownloaded && mangaDownloadCount(m.id) === 0) return false;
       if (!state.onlyDownloaded && state.selectedCat !== 'all') {
@@ -1063,7 +1524,8 @@
       state.updates = (Offline ? await Offline.getSnapshot('updates') : null) || [];
     }
 
-    if (!state.updates.length) {
+    const visibleUpdates = state.updates.filter((ch) => ch.manga && !isMangaSecret(ch.manga));
+    if (!visibleUpdates.length) {
       mainContent.innerHTML = `
         <div class="empty-state">
           <h3>Sin novedades todavía</h3>
@@ -1073,7 +1535,7 @@
       return;
     }
 
-    mainContent.innerHTML = `<div class="list-stack">${state.updates.map((ch) => {
+    mainContent.innerHTML = `<div class="list-stack">${visibleUpdates.map((ch) => {
       if (!ch.manga) return '';
       const dl = isDownloaded(ch.id);
       const locked = state.offline && !dl;
@@ -1203,7 +1665,8 @@
       state.recent = (Offline ? await Offline.getSnapshot('recent') : null) || [];
     }
 
-    if (!state.recent.length) {
+    const visibleRecent = state.recent.filter((ch) => ch.manga && !isMangaSecret(ch.manga));
+    if (!visibleRecent.length) {
       mainContent.innerHTML = `
         <div class="empty-state">
           <h3>${state.offline ? 'Sin lecturas recientes guardadas' : 'Aún no hay lecturas recientes'}</h3>
@@ -1213,7 +1676,7 @@
       return;
     }
 
-    mainContent.innerHTML = `<div class="list-stack">${state.recent.map((ch) => {
+    mainContent.innerHTML = `<div class="list-stack">${visibleRecent.map((ch) => {
       const dl = isDownloaded(ch.id);
       const locked = state.offline && !dl;
       const pageTxt = ch.isRead
@@ -1264,8 +1727,9 @@
     state.globalSearchResults = [];
     if (!query) { renderExplore(); return; }
 
-    mainContent.innerHTML = `<div class="empty-state"><div class="spinner"></div><p>Buscando "${esc(query)}" en ${state.sources.length} fuente(s)...</p></div>`;
-    const results = await Promise.all(state.sources.map(async (src) => {
+    const publicSources = state.sources.filter((s) => !Extras || !Extras.isSourceHidden(s.id));
+    mainContent.innerHTML = `<div class="empty-state"><div class="spinner"></div><p>Buscando "${esc(query)}" en ${publicSources.length} fuente(s)...</p></div>`;
+    const results = await Promise.all(publicSources.map(async (src) => {
       try {
         const data = await gql(M_SOURCE_MANGAS, {
           input: { source: String(src.id), type: 'SEARCH', page: 1, query }
@@ -1348,10 +1812,11 @@
       return;
     }
 
-    if (!state.sources.length) {
+    const publicSources = state.sources.filter((s) => !Extras || !Extras.isSourceHidden(s.id));
+    if (!publicSources.length) {
       mainContent.innerHTML = `
         <div class="empty-state">
-          <h3>No hay fuentes instaladas</h3>
+          <h3>No hay fuentes visibles</h3>
           <p>Instala alguna extensión desde el Suwayomi completo para explorar mangas desde aquí.</p>
           <a href="/" class="primary-btn" style="display:inline-block;max-width:240px;text-decoration:none">Abrir Suwayomi completo</a>
         </div>
@@ -1376,7 +1841,7 @@
       return;
     }
 
-    mainContent.innerHTML = `<div class="list-stack">${state.sources.map((s) => `
+    mainContent.innerHTML = `<div class="list-stack">${publicSources.map((s) => `
       <div class="list-card" data-source-id="${esc(s.id)}">
         <img class="source-icon" src="${esc(s.iconUrl || '')}" alt="" loading="lazy">
         <div class="list-body">
@@ -1499,12 +1964,14 @@
     const p = state.prefs;
 
     await refreshDownloadsIndex();
-    const allDl = Offline ? await Offline.listDownloads() : [];
+    const rawDl = Offline ? await Offline.listDownloads() : [];
+    const allDl = rawDl.filter((d) => !Extras || !Extras.isMangaHidden(d.mangaId));
     const pendingSyncs = Offline ? await Offline.getPendingSyncs() : [];
     const totalBytes = allDl.reduce((acc, d) => acc + (d.bytes || 0), 0);
     const est = Extras ? await Extras.getStorageEstimate() : null;
     const stats = Extras ? Extras.getStats() : { chaptersCompleted: 0, secondsRead: 0, pagesViewed: 0 };
-    const bookmarks = Extras ? Extras.getPageBookmarks() : [];
+    const bookmarks = (Extras ? Extras.getPageBookmarks() : []).filter((bm) => !Extras || !Extras.isMangaHidden(bm.mangaId));
+    const visibleLibCount = state.library.filter((m) => !isMangaSecret(m)).length;
 
     const byManga = new Map();
     for (const d of allDl) {
@@ -1533,7 +2000,7 @@
       <div class="settings-card">
         <div style="font-size:14px;font-weight:700;margin-bottom:4px">Estadísticas en este móvil</div>
         <div class="stats-grid">
-          <div class="stat-tile"><strong>${state.library.length}</strong><span>En biblioteca</span></div>
+          <div class="stat-tile"><strong>${visibleLibCount}</strong><span>En biblioteca</span></div>
           <div class="stat-tile"><strong>${stats.chaptersCompleted}</strong><span>Cap. leídos</span></div>
           <div class="stat-tile"><strong>${minsRead}m</strong><span>Tiempo leído</span></div>
         </div>
@@ -1655,8 +2122,11 @@
         <a href="/" class="secondary-btn" style="display:block;text-align:center;text-decoration:none;margin-bottom:10px">
           Abrir Suwayomi completo (instalar extensiones)
         </a>
-        <button id="settingsClearHistBtn" class="secondary-btn" type="button" style="width:100%;color:#ff8690;border-color:rgba(255,77,90,0.35)">
+        <button id="settingsClearHistBtn" class="secondary-btn" type="button" style="width:100%;margin-bottom:10px;color:#ff8690;border-color:rgba(255,77,90,0.35)">
           Borrar historial de lectura
+        </button>
+        <button id="settingsVaultBtn" class="secondary-btn" type="button" style="width:100%;font-size:12px;color:var(--muted)">
+          Bóveda privada (acceso rápido: 5 toques en "Biblioteca")
         </button>
       </div>
     `;
@@ -1708,7 +2178,9 @@
     if (delAll) {
       delAll.addEventListener('click', async () => {
         if (!confirm('¿Borrar TODOS los capítulos descargados de tu móvil?')) return;
-        await Offline.deleteAllDownloads();
+        for (const d of allDl) {
+          await Offline.deleteDownload(d.chapterId);
+        }
         await refreshDownloadsIndex();
         showToast('Todas las descargas borradas');
         renderSettings();
@@ -1785,6 +2257,8 @@
     if (instBtn) instBtn.addEventListener('click', triggerInstallApp);
     const clrHistBtn = $('settingsClearHistBtn');
     if (clrHistBtn) clrHistBtn.addEventListener('click', () => runClearHistory(0, ''));
+    const vaultBtn = $('settingsVaultBtn');
+    if (vaultBtn) vaultBtn.addEventListener('click', requestOpenVault);
   }
 
   // ---------------- DETALLE DE MANGA (Categorías, Migración, Marcadores, Descargas) ----------------
@@ -1849,7 +2323,10 @@
         const d = await gql(Q_SOURCES, {}, 7000);
         state.sources = (d.sources && d.sources.nodes) || [];
       }
-      const others = state.sources.filter((s) => String(s.id) !== String(manga.sourceId));
+      const others = state.sources.filter((s) =>
+        String(s.id) !== String(manga.sourceId) &&
+        (state.vaultOpen ? true : (!Extras || !Extras.isSourceHidden(s.id)))
+      );
       const res = await Promise.all(others.map(async (src) => {
         try {
           const r = await gql(M_SOURCE_MANGAS, {
@@ -1915,6 +2392,12 @@
       }
 
       setOfflineMode(false);
+      if (isIncognitoManga(manga) && Extras) {
+        chapters = chapters.map((c) => {
+          const vp = Extras.getVaultChapterProgress(c.id);
+          return vp ? Object.assign({}, c, { lastPageRead: vp.lastPageRead, isRead: vp.isRead }) : c;
+        });
+      }
       state.manga = manga;
       state.mangaChapters = chapters;
       if (Offline) {
@@ -1927,7 +2410,13 @@
       const cached = Offline ? await Offline.getMangaDetail(mangaId) : null;
       if (cached && cached.manga) {
         state.manga = cached.manga;
-        state.mangaChapters = cached.chapters || [];
+        state.mangaChapters = (cached.chapters || []).map((c) => {
+          if (isIncognitoManga(cached.manga) && Extras) {
+            const vp = Extras.getVaultChapterProgress(c.id);
+            if (vp) return Object.assign({}, c, { lastPageRead: vp.lastPageRead, isRead: vp.isRead });
+          }
+          return c;
+        });
         drawMangaDetail();
       } else {
         mangaView.innerHTML = `
@@ -2020,6 +2509,7 @@
               <h2 class="manga-hero-title">${esc(m.title)}</h2>
               <div class="manga-hero-sub">${esc(metaParts.join(' · '))}</div>
               ${dlCount > 0 ? `<div style="margin-top:5px;font-size:11.5px;color:var(--green);font-weight:600">↓ ${dlCount} descargado(s)</div>` : ''}
+              ${isIncognitoManga(m) ? '<div style="margin-top:5px"><span class="vault-pill">🔒 Modo incógnito (sin rastro en PC)</span></div>' : ''}
             </div>
           </div>
         </div>
@@ -2029,8 +2519,10 @@
         ${resume
           ? `<button id="detailResumeBtn" class="primary-btn" style="flex:1">${esc(resume.label)}</button>`
           : (state.offline ? '<button class="secondary-btn" style="flex:1;opacity:0.6" disabled>Sin capítulos descargados</button>' : '')}
-        ${!state.offline ? `<button id="detailLibBtn" class="secondary-btn" type="button" style="${m.inLibrary ? 'border-color:var(--green);color:var(--green)' : ''}">${m.inLibrary ? '✓ Biblio' : '+ Biblio'}</button>` : ''}
-        ${!state.offline && m.inLibrary ? '<button id="detailCatBtn" class="secondary-btn" type="button">Cat.</button>' : ''}
+        ${(state.vaultOpen || (Extras && Extras.isMangaHidden(m.id)))
+          ? `<button id="detailVaultToggleBtn" class="secondary-btn" type="button" style="border-color:#a78bfa;color:#e9d5ff">${Extras.isMangaHidden(m.id) ? '🔒 En bóveda' : '+ Bóveda'}</button>`
+          : (!state.offline ? `<button id="detailLibBtn" class="secondary-btn" type="button" style="${m.inLibrary ? 'border-color:var(--green);color:var(--green)' : ''}">${m.inLibrary ? '✓ Biblio' : '+ Biblio'}</button>` : '')}
+        ${!state.offline && !state.vaultOpen && m.inLibrary ? '<button id="detailCatBtn" class="secondary-btn" type="button">Cat.</button>' : ''}
       </div>
 
       ${m.description ? `<div id="detailDesc" class="manga-desc clamped">${esc(m.description)}</div>` : ''}
@@ -2100,6 +2592,22 @@
     if (desc) desc.addEventListener('click', () => desc.classList.toggle('clamped'));
     const resumeBtn = $('detailResumeBtn');
     if (resumeBtn && resume) resumeBtn.addEventListener('click', () => navigateHash(`#read/${m.id}/${resume.chap.id}`));
+
+    const vaultToggleBtn = $('detailVaultToggleBtn');
+    if (vaultToggleBtn && Extras) {
+      vaultToggleBtn.addEventListener('click', () => {
+        if (Extras.isMangaHidden(m.id)) {
+          Extras.removeMangaFromVault(m.id);
+          showToast('Quitado de la bóveda oculta');
+        } else {
+          Extras.addMangaToVault(m);
+          if (Offline && m.thumbnailUrl) Offline.cacheCover(m.id, m.thumbnailUrl);
+          showToast('Guardado en tu bóveda oculta');
+        }
+        drawMangaDetail();
+        if (state.vaultOpen) renderVault();
+      });
+    }
 
     const libBtn = $('detailLibBtn');
     if (libBtn) {
@@ -2384,6 +2892,12 @@
       r.lastSavedPage = pageIdx;
 
       if (Offline && r.manga) Offline.updateLocalChapterProgress(r.manga.id, chap.id, patch);
+
+      // Modo incógnito de la bóveda: guardar SOLO en local sin dejar rastro en el historial del PC
+      if (isIncognitoManga(r.manga) && Extras) {
+        Extras.saveVaultChapterProgress(chap.id, patch);
+        return;
+      }
 
       if (state.offline) {
         if (Offline) Offline.queueProgress(chap.id, patch);

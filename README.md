@@ -23,7 +23,7 @@ instalar, encender, apagar y abrir el lector en el navegador.
 | `backup-restore.ps1` | `backup-restore.sh` | Crea y restaura copias de seguridad (`database.mv.db` y `.tachibk` compatible con Mihon/Tachiyomi). |
 | `verificar-extensiones.ps1` | `verificar-extensiones.sh` | Comprueba en VirusTotal las extensiones instaladas (necesita una API key gratuita). |
 | `setup-tailscale.ps1` | `setup-tailscale.sh` | Asistente visual para usar Suwayomi desde el móvil con Tailscale (acceso privado HTTPS, código QR y control de suspensión). |
-| `mobile/` | `mobile/` | App web móvil instalable (PWA, ruta `/movil/`): lector tipo PDF o paginado, modo por manga, paso automático, Wake Lock, zoom, recorte de bordes, brillo táctil, doble página, novedades, búsqueda global, categorías, migración, marcadores, estadísticas, descargas offline con cola y bloqueo PIN. |
+| `mobile/` | `mobile/` | App web móvil instalable (PWA, ruta `/movil/`): lector tipo PDF o paginado, modo por manga, paso automático, Wake Lock, zoom, recorte de bordes, brillo táctil, doble página, novedades, búsqueda global, categorías, migración, marcadores, estadísticas, descargas offline con cola, bloqueo PIN y bóveda oculta incógnito. |
 | `mobile-server.ps1` | `mobile-server.py` | Servidor local ligero (solo `127.0.0.1:4568`) que sirve `mobile/` y acciones seguras desde el móvil (como borrar historial) sin tocar `webUI` de Suwayomi. |
 | `wake-pc.ps1` | `wake-pc.sh` | Utilidad opcional de Wake-on-LAN: muestra la dirección MAC local o envía un paquete mágico en tu red local. |
 | — | `common.sh` | Configuración compartida de los scripts de macOS. |

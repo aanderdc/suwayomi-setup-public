@@ -6,6 +6,9 @@
   const MANGA_MODES_KEY = 'suwayomi_manga_modes_v1';
   const PAGE_MARKS_KEY = 'suwayomi_page_bookmarks_v1';
   const STATS_KEY = 'suwayomi_reading_stats_v1';
+  const VAULT_KEY = 'suwayomi_vault_data_v1';
+  const VAULT_PIN_KEY = 'suwayomi_vault_pin_hash_v1';
+  const VAULT_UNLOCK_KEY = 'suwayomi_vault_unlocked_v1';
 
   // ---------------- Hash SHA-256 (con respaldo síncrono si no hay crypto.subtle) ----------------
   async function hashPin(pin) {
@@ -246,6 +249,139 @@
     return null;
   }
 
+  // ---------------- Bóveda oculta / Modo incógnito ----------------
+  function defaultVault() {
+    return {
+      mangas: {},      // id -> { id, title, thumbnailUrl, sourceId, addedAt }
+      sourceIds: [],   // string[] de source.id ocultos
+      incognito: true, // true = no envía progreso ni historial a Suwayomi PC
+      progress: {}     // chapterId -> { lastPageRead, isRead, updatedAt }
+    };
+  }
+
+  function loadVault() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(VAULT_KEY) || '{}') || {};
+      return Object.assign(defaultVault(), raw, {
+        mangas: raw.mangas || {},
+        sourceIds: Array.isArray(raw.sourceIds) ? raw.sourceIds.map(String) : [],
+        progress: raw.progress || {}
+      });
+    } catch {
+      return defaultVault();
+    }
+  }
+
+  function saveVault(v) {
+    try { localStorage.setItem(VAULT_KEY, JSON.stringify(v)); } catch { }
+  }
+
+  function hasVaultPin() {
+    return !!localStorage.getItem(VAULT_PIN_KEY);
+  }
+
+  async function setVaultPin(pin) {
+    const h = await hashPin('vault:' + pin);
+    localStorage.setItem(VAULT_PIN_KEY, h);
+    sessionStorage.setItem(VAULT_UNLOCK_KEY, '1');
+  }
+
+  async function verifyVaultPin(pin) {
+    const stored = localStorage.getItem(VAULT_PIN_KEY);
+    if (!stored) return true;
+    return (await hashPin('vault:' + pin)) === stored;
+  }
+
+  function isVaultUnlocked() {
+    return hasVaultPin() && sessionStorage.getItem(VAULT_UNLOCK_KEY) === '1';
+  }
+
+  function unlockVaultSession() {
+    sessionStorage.setItem(VAULT_UNLOCK_KEY, '1');
+  }
+
+  function lockVaultSession() {
+    sessionStorage.removeItem(VAULT_UNLOCK_KEY);
+  }
+
+  function isMangaHidden(mangaId) {
+    const v = loadVault();
+    return !!v.mangas[String(mangaId)];
+  }
+
+  function isSourceHidden(sourceId) {
+    const v = loadVault();
+    return v.sourceIds.includes(String(sourceId));
+  }
+
+  function getHiddenMangaList() {
+    const v = loadVault();
+    return Object.values(v.mangas).sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  }
+
+  function getHiddenSourceIds() {
+    return loadVault().sourceIds;
+  }
+
+  function addMangaToVault(manga) {
+    if (!manga || !manga.id) return;
+    const v = loadVault();
+    v.mangas[String(manga.id)] = {
+      id: Number(manga.id),
+      title: manga.title || `Manga #${manga.id}`,
+      thumbnailUrl: manga.thumbnailUrl || '',
+      sourceId: manga.sourceId ? String(manga.sourceId) : '',
+      addedAt: Date.now()
+    };
+    saveVault(v);
+  }
+
+  function removeMangaFromVault(mangaId) {
+    const v = loadVault();
+    delete v.mangas[String(mangaId)];
+    saveVault(v);
+  }
+
+  function toggleSourceHidden(sourceId) {
+    const id = String(sourceId);
+    const v = loadVault();
+    const idx = v.sourceIds.indexOf(id);
+    if (idx >= 0) v.sourceIds.splice(idx, 1);
+    else v.sourceIds.push(id);
+    saveVault(v);
+    return idx < 0;
+  }
+
+  function isVaultIncognito() {
+    return loadVault().incognito !== false;
+  }
+
+  function setVaultIncognito(val) {
+    const v = loadVault();
+    v.incognito = !!val;
+    saveVault(v);
+  }
+
+  function getVaultChapterProgress(chapterId) {
+    const v = loadVault();
+    return v.progress[String(chapterId)] || null;
+  }
+
+  function saveVaultChapterProgress(chapterId, patch) {
+    const v = loadVault();
+    const cur = v.progress[String(chapterId)] || { lastPageRead: 0, isRead: false };
+    v.progress[String(chapterId)] = {
+      lastPageRead: typeof patch.lastPageRead === 'number' ? patch.lastPageRead : cur.lastPageRead,
+      isRead: !!(patch.isRead || cur.isRead),
+      updatedAt: Date.now()
+    };
+    saveVault(v);
+  }
+
+  function clearVaultAll() {
+    saveVault(defaultVault());
+  }
+
   window.SuwayomiExtras = {
     hasPin,
     setPin,
@@ -264,6 +400,24 @@
     requestWakeLock,
     releaseWakeLock,
     cropWhiteMargins,
-    getStorageEstimate
+    getStorageEstimate,
+    hasVaultPin,
+    setVaultPin,
+    verifyVaultPin,
+    isVaultUnlocked,
+    unlockVaultSession,
+    lockVaultSession,
+    isMangaHidden,
+    isSourceHidden,
+    getHiddenMangaList,
+    getHiddenSourceIds,
+    addMangaToVault,
+    removeMangaFromVault,
+    toggleSourceHidden,
+    isVaultIncognito,
+    setVaultIncognito,
+    getVaultChapterProgress,
+    saveVaultChapterProgress,
+    clearVaultAll
   };
 })();
