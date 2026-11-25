@@ -249,6 +249,18 @@ export default {
     return keys.length ? String(obj[keys[0]] || '') : '';
   }
 
+  function unwrapDirectCover(url) {
+    if (!url) return '';
+    try {
+      const u = new URL(url);
+      if (u.pathname === '/img' && u.searchParams.get('u')) {
+        const inner = u.searchParams.get('u');
+        if (/^https:\/\/uploads\.mangadex\.org\//i.test(inner)) return inner;
+      }
+    } catch { }
+    return url;
+  }
+
   function proxyImageUrl(rawUrl) {
     if (!rawUrl) return '';
     const cfg = getConfig();
@@ -267,8 +279,8 @@ export default {
     const artistRel = rels.find((r) => r.type === 'artist' && r.attributes && r.attributes.name);
 
     const fileName = coverRel ? coverRel.attributes.fileName : '';
-    const rawThumb = fileName ? `https://uploads.mangadex.org/covers/${raw.id}/${fileName}.256.jpg` : '';
-    const thumb = proxyImageUrl(rawThumb);
+    // Las portadas en uploads.mangadex.org cargan directo con CORS desde el navegador (evita DDoS-Guard en Worker)
+    const thumb = fileName ? `https://uploads.mangadex.org/covers/${raw.id}/${fileName}.256.jpg` : '';
     const genres = (attr.tags || [])
       .map((t) => (t.attributes && t.attributes.name && (t.attributes.name.es || t.attributes.name.en)) || '')
       .filter(Boolean);
@@ -516,6 +528,7 @@ export default {
     return Object.values(map).map((m) => {
       const h = histByManga.get(m.id);
       return Object.assign({}, m, {
+        thumbnailUrl: unwrapDirectCover(m.thumbnailUrl || ''),
         inLibrary: true,
         isRemoteDirect: true,
         unreadCount: 0,
@@ -588,7 +601,9 @@ export default {
   function getHistory() {
     try {
       const arr = JSON.parse(localStorage.getItem(HIST_KEY) || '[]');
-      return Array.isArray(arr) ? arr.sort((a, b) => (b.readAt || 0) - (a.readAt || 0)) : [];
+      return Array.isArray(arr)
+        ? arr.map((h) => Object.assign({}, h, { thumbnailUrl: unwrapDirectCover(h.thumbnailUrl || '') })).sort((a, b) => (b.readAt || 0) - (a.readAt || 0))
+        : [];
     } catch {
       return [];
     }
