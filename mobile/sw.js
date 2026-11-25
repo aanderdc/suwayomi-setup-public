@@ -1,13 +1,13 @@
-const CACHE_NAME = 'suwayomi-movil-v16';
+const CACHE_NAME = 'suwayomi-movil-v17';
 const MEDIA_CACHE = 'suwayomi-offline-media-v1';
 const SHELL_URLS = [
   '/movil/',
   '/movil/index.html',
-  '/movil/styles.css?v=16',
-  '/movil/offline.js?v=16',
-  '/movil/extras.js?v=16',
-  '/movil/remote.js?v=16',
-  '/movil/app.js?v=16',
+  '/movil/styles.css?v=17',
+  '/movil/offline.js?v=17',
+  '/movil/extras.js?v=17',
+  '/movil/remote.js?v=17',
+  '/movil/app.js?v=17',
   '/movil/manifest.json',
   '/movil/icon-192.png',
   '/movil/icon-512.png',
@@ -17,7 +17,7 @@ const SHELL_URLS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(SHELL_URLS))
+      .then((cache) => cache.addAll(SHELL_URLS.map((u) => new Request(u, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -54,8 +54,12 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (!url.pathname.startsWith('/movil')) return;
 
-  // Nunca cachear tráfico dinámico de la bóveda ni acciones privadas
-  if (url.pathname.startsWith('/movil/__vault__/') || url.pathname.startsWith('/movil/__action__/')) {
+  // Nunca cachear tráfico dinámico ni el propio sw.js
+  if (
+    url.pathname === '/movil/sw.js' ||
+    url.pathname.startsWith('/movil/__vault__/') ||
+    url.pathname.startsWith('/movil/__action__/')
+  ) {
     return;
   }
 
@@ -68,7 +72,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Recursos estáticos versionados e iconos: cache-first para arranque instantáneo con el PC apagado
+  // Recursos estáticos versionados (?v=17) e iconos: cache-first para arranque instantáneo con PC apagado
   const isStaticAsset = url.search.includes('v=') || /\.(png|svg|json|css|js)$/i.test(url.pathname);
   if (isStaticAsset && !url.pathname.endsWith('.html')) {
     event.respondWith(
@@ -86,16 +90,21 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // HTML principal (/movil/ o /movil/index.html): red rápida (2.2s máx) y fallback a caché local
+  // HTML principal (/movil/ o /movil/index.html): siempre intenta red sin caché HTTP (hasta 5s) y cae a caché si PC apagado
+  const netReq = new Request('/movil/index.html', { cache: 'no-store' });
+  const netPromise = fetchWithTimeout(netReq, 5000).then((res) => {
+    if (res && res.ok) {
+      const clone1 = res.clone();
+      const clone2 = res.clone();
+      caches.open(CACHE_NAME).then((cache) => {
+        cache.put('/movil/index.html', clone1).catch(() => { });
+        cache.put('/movil/', clone2).catch(() => { });
+      }).catch(() => { });
+    }
+    return res;
+  });
+
   event.respondWith(
-    fetchWithTimeout(req, 2200)
-      .then((res) => {
-        if (res && res.ok) {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => { });
-        }
-        return res;
-      })
-      .catch(() => caches.match(req).then((cached) => cached || caches.match('/movil/index.html')))
+    netPromise.catch(() => caches.match('/movil/index.html').then((cached) => cached || caches.match('/movil/')))
   );
 });

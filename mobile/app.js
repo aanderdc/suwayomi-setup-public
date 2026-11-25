@@ -1,6 +1,7 @@
 (() => {
   'use strict';
 
+  const APP_VERSION = 'v17';
   const API_URL = '/api/graphql';
   const VAULT_API_URL = '/movil/__vault__/api/graphql';
   const PREFS_KEY = 'suwayomi_mobile_prefs_v3';
@@ -314,8 +315,18 @@
     });
   }
 
+  let swReloading = false;
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/movil/sw.js', { scope: '/movil/' }).catch(() => { });
+    navigator.serviceWorker.register('/movil/sw.js', { scope: '/movil/', updateViaCache: 'none' })
+      .then((reg) => {
+        try { reg.update(); } catch { }
+      })
+      .catch(() => { });
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (swReloading) return;
+      swReloading = true;
+      window.location.reload();
+    });
   }
   updateInstallBanner();
 
@@ -3375,6 +3386,9 @@
         <a href="/" class="secondary-btn" style="display:block;text-align:center;text-decoration:none;margin-bottom:10px">
           Abrir Suwayomi completo (instalar extensiones)
         </a>
+        <button id="settingsUpdateAppBtn" class="secondary-btn" type="button" style="width:100%;margin-bottom:10px;color:#93c5fd;border-color:rgba(56,189,248,0.4)">
+          Actualizar app ahora (${APP_VERSION})
+        </button>
         <button id="settingsClearHistBtn" class="secondary-btn" type="button" style="width:100%;margin-bottom:10px;color:#ff8690;border-color:rgba(255,77,90,0.35)">
           Borrar historial de lectura
         </button>
@@ -3669,6 +3683,26 @@
       });
     }
 
+    const updAppBtn = $('settingsUpdateAppBtn');
+    if (updAppBtn) {
+      updAppBtn.addEventListener('click', async () => {
+        showToast('Buscando nueva versión...');
+        try {
+          if ('caches' in window) {
+            const keys = await caches.keys();
+            for (const k of keys) {
+              if (k.startsWith('suwayomi-movil-')) await caches.delete(k);
+            }
+          }
+          if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            for (const reg of regs) await reg.update().catch(() => { });
+          }
+        } catch { }
+        const sep = location.search ? '&' : '?';
+        location.replace('/movil/' + sep + '_u=' + Date.now() + (location.hash || '#settings'));
+      });
+    }
     const instBtn = $('settingsInstallBtn');
     if (instBtn) instBtn.addEventListener('click', triggerInstallApp);
     const clrHistBtn = $('settingsClearHistBtn');
