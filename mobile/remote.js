@@ -25,6 +25,10 @@ function corsHeaders(origin) {
     'Vary': 'Origin'
   };
 }
+function isAllowedImgHost(h) {
+  h = (h || '').toLowerCase();
+  return h === 'uploads.mangadex.org' || h === 'mangadex.network' || h.endsWith('.mangadex.network');
+}
 export default {
   async fetch(request) {
     const origin = request.headers.get('Origin') || '*';
@@ -33,12 +37,27 @@ export default {
     if (request.method !== 'GET') return new Response('{"error":"Method not allowed"}', { status: 405, headers: { ...headers, 'Content-Type': 'application/json' } });
     const url = new URL(request.url);
     if (url.pathname === '/' || url.pathname === '/health') {
-      return new Response('{"ok":true,"bridge":"suwayomi-movil-mangadex"}', { status: 200, headers: { ...headers, 'Content-Type': 'application/json' } });
+      return new Response('{"ok":true,"bridge":"suwayomi-movil-mangadex","v":2}', { status: 200, headers: { ...headers, 'Content-Type': 'application/json' } });
+    }
+    if (url.pathname === '/img') {
+      let target = null;
+      try { target = new URL(url.searchParams.get('u') || ''); } catch {}
+      if (!target || target.protocol !== 'https:' || !isAllowedImgHost(target.hostname)) {
+        return new Response('{"error":"Image host not allowed"}', { status: 403, headers: { ...headers, 'Content-Type': 'application/json' } });
+      }
+      const imgRes = await fetch(target.toString(), {
+        headers: { 'Referer': 'https://mangadex.org/', 'User-Agent': 'Mozilla/5.0 (compatible; SuwayomiMovilBridge/2.0)' }
+      });
+      const out = new Headers(imgRes.headers);
+      for (const [k, v] of Object.entries(headers)) out.set(k, v);
+      out.delete('set-cookie');
+      if (imgRes.ok) out.set('Cache-Control', 'public, max-age=86400');
+      return new Response(imgRes.body, { status: imgRes.status, headers: out });
     }
     const allowed = /^\\/(manga(\\/[0-9a-f-]{36}(\\/feed)?)?|manga\\/tag|at-home\\/server\\/[0-9a-f-]{36}|ping)$/i;
     if (!allowed.test(url.pathname)) return new Response('{"error":"Path not allowed"}', { status: 403, headers: { ...headers, 'Content-Type': 'application/json' } });
     const res = await fetch(UPSTREAM + url.pathname + url.search, {
-      headers: { 'User-Agent': 'SuwayomiMovilBridge/1.0', 'Accept': 'application/json' }
+      headers: { 'User-Agent': 'SuwayomiMovilBridge/2.0', 'Accept': 'application/json' }
     });
     const out = new Headers(res.headers);
     for (const [k, v] of Object.entries(headers)) out.set(k, v);
@@ -230,6 +249,15 @@ export default {
     return keys.length ? String(obj[keys[0]] || '') : '';
   }
 
+  function proxyImageUrl(rawUrl) {
+    if (!rawUrl) return '';
+    const cfg = getConfig();
+    if (cfg.workerUrl) {
+      return `${cfg.workerUrl}/img?u=${encodeURIComponent(rawUrl)}`;
+    }
+    return rawUrl;
+  }
+
   function mapManga(raw) {
     if (!raw || !raw.id) return null;
     const attr = raw.attributes || {};
@@ -239,7 +267,8 @@ export default {
     const artistRel = rels.find((r) => r.type === 'artist' && r.attributes && r.attributes.name);
 
     const fileName = coverRel ? coverRel.attributes.fileName : '';
-    const thumb = fileName ? `https://uploads.mangadex.org/covers/${raw.id}/${fileName}.256.jpg` : '';
+    const rawThumb = fileName ? `https://uploads.mangadex.org/covers/${raw.id}/${fileName}.256.jpg` : '';
+    const thumb = proxyImageUrl(rawThumb);
     const genres = (attr.tags || [])
       .map((t) => (t.attributes && t.attributes.name && (t.attributes.name.es || t.attributes.name.en)) || '')
       .filter(Boolean);
@@ -439,7 +468,7 @@ export default {
     const useSaver = cfg.dataSaver !== false && Array.isArray(data.chapter.dataSaver) && data.chapter.dataSaver.length > 0;
     const files = useSaver ? data.chapter.dataSaver : (data.chapter.data || []);
     const modePath = useSaver ? 'data-saver' : 'data';
-    return files.map((f) => `${data.baseUrl}/${modePath}/${hash}/${f}`);
+    return files.map((f) => proxyImageUrl(`${data.baseUrl}/${modePath}/${hash}/${f}`));
   }
 
   async function fetchLibraryUpdates(hideNsfw = false) {
