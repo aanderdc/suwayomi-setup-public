@@ -1512,3 +1512,153 @@ button, input, select {
   user-select: text;
   -webkit-user-select: text;
 }
+
+/* ---------------- Calidad de vida (v16) ---------------- */
+.manga-grid.cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.manga-grid.cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.continue-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 77, 90, 0.16), rgba(20, 24, 33, 0.96));
+  border: 1px solid rgba(255, 77, 90, 0.32);
+  cursor: pointer;
+  overflow: hidden;
+}
+.continue-card:active {
+  transform: scale(0.99);
+}
+.continue-thumb {
+  width: 48px;
+  height: 68px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #1d2230;
+  flex: 0 0 auto;
+}
+.continue-body {
+  flex: 1;
+  min-width: 0;
+}
+.continue-eyebrow {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #ff8e97;
+}
+.continue-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.continue-sub {
+  font-size: 12px;
+  color: #c2cad6;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.continue-bar-track {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  margin-top: 6px;
+  overflow: hidden;
+}
+.continue-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.ptr-indicator {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #93c5fd;
+  padding: 8px 12px;
+  background: rgba(18, 33, 48, 0.92);
+  border-bottom: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.chap-more-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 32px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.chap-more-btn:active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.reader-warm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(255, 166, 64, 0.55);
+  mix-blend-mode: multiply;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 74;
+}
+
+.reader-progress-track {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2.5px;
+  background: rgba(255, 255, 255, 0.12);
+  z-index: 66;
+  pointer-events: none;
+}
+
+.reader-progress-line {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.18s ease;
+}
+
+.reader-autoscroll-pill {
+  position: fixed;
+  left: 12px;
+  bottom: calc(12px + var(--safe-bottom));
+  z-index: 68;
+  border: 1px solid rgba(255, 77, 90, 0.6);
+  background: rgba(18, 22, 32, 0.88);
+  color: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}

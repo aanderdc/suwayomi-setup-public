@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/movil/icon-192.png">
   <link rel="icon" type="image/svg+xml" href="/movil/icon.svg">
   <link rel="apple-touch-icon" sizes="192x192" href="/movil/icon-192.png">
-  <link rel="stylesheet" href="/movil/styles.css?v=15">
+  <link rel="stylesheet" href="/movil/styles.css?v=16">
 </head>
 <body>
   <div id="app">
@@ -58,6 +58,9 @@
       <button id="dlQueueOpenBtn" class="offline-retry-btn" type="button">Cola</button>
     </div>
 
+    <!-- Indicador de deslizar para actualizar (Pull to Refresh) -->
+    <div id="ptrIndicator" class="ptr-indicator hidden">↻ Desliza para actualizar</div>
+
     <!-- Contenido principal de pestañas -->
     <main id="mainContent" class="main-content"></main>
 
@@ -97,12 +100,19 @@
 
     <!-- Vista lector a pantalla completa estilo Manga Dogs -->
     <section id="readerView" class="reader-view hidden" aria-label="Lector de manga">
+      <div id="readerWarmFilter" class="reader-warm-overlay"></div>
       <div id="readerDimmer" class="reader-dimmer"></div>
 
       <div id="readerStage" class="reader-stage"></div>
 
       <!-- HUD flotante de brillo al deslizar por el borde izquierdo -->
       <div id="readerBrightnessHud" class="reader-hud hidden"></div>
+
+      <!-- Botón flotante para pausar auto-scroll manos libres -->
+      <button id="readerAutoScrollPill" class="reader-autoscroll-pill hidden" type="button">⏸ Auto-scroll</button>
+
+      <!-- Barra ultrafina de progreso del capítulo -->
+      <div class="reader-progress-track"><div id="readerProgressLine" class="reader-progress-line"></div></div>
 
       <!-- Indicador discreto de página (esquina inferior) -->
       <div id="readerMiniStatus" class="reader-mini-status"></div>
@@ -175,9 +185,9 @@
     <div id="toast" class="toast hidden"></div>
   </div>
 
-  <script src="/movil/offline.js?v=15"></script>
-  <script src="/movil/extras.js?v=15"></script>
-  <script src="/movil/remote.js?v=15"></script>
-  <script src="/movil/app.js?v=15"></script>
+  <script src="/movil/offline.js?v=16"></script>
+  <script src="/movil/extras.js?v=16"></script>
+  <script src="/movil/remote.js?v=16"></script>
+  <script src="/movil/app.js?v=16"></script>
 </body>
 </html>

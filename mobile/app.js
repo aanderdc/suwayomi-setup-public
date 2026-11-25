@@ -20,7 +20,11 @@
     doublePage: true,     // doble pagina en horizontal / tablet (modo paginado)
     autoDlNext: 0,        // 0 | 1 | 3 | 5 descargar siguientes N capitulos al abrir uno
     autoDelRead: false,   // borrar descarga del movil al terminar un capitulo
-    filterNsfw: false     // filtro +18 para ocultar mangas, tags y fuentes +18 fuera de la boveda
+    filterNsfw: false,    // filtro +18 para ocultar mangas, tags y fuentes +18 fuera de la boveda
+    warmth: 0,            // 0..45 filtro calido / sepia para lectura nocturna
+    gridCols: 3,          // 2 | 3 | 4 columnas en la biblioteca
+    showClockBatt: true,  // mostrar hora y bateria en el indicador discreto del lector
+    autoScrollSpeed: 2    // 1 (lento) | 2 (normal) | 3 (rapido) velocidad de auto-scroll manos libres
   };
 
   function loadPrefs() {
@@ -138,9 +142,13 @@
   const appSheet = $('appSheet');
   const readerView = $('readerView');
   const readerStage = $('readerStage');
+  const readerWarmFilter = $('readerWarmFilter');
   const readerDimmer = $('readerDimmer');
+  const readerProgressLine = $('readerProgressLine');
+  const readerAutoScrollPill = $('readerAutoScrollPill');
   const readerBrightnessHud = $('readerBrightnessHud');
   const readerMiniStatus = $('readerMiniStatus');
+  const ptrIndicator = $('ptrIndicator');
   const readerMangaTitle = $('readerMangaTitle');
   const readerChapterTitle = $('readerChapterTitle');
   const readerBookmarkBtn = $('readerBookmarkBtn');
@@ -2021,13 +2029,29 @@
     const direct = isDirectMode();
     headerTitle.textContent = 'Biblioteca';
     headerActions.innerHTML = direct
-      ? `<button id="libDirectExpBtn" class="secondary-btn" type="button" style="padding:6px 9px;font-size:11.5px">+ Explorar</button>`
+      ? `
+        <button id="libRandomBtn" class="icon-btn" type="button" title="Manga al azar" aria-label="Manga al azar">🎲</button>
+        <button id="libDirectExpBtn" class="secondary-btn" type="button" style="padding:6px 9px;font-size:11.5px">+ Explorar</button>
+      `
       : `
+        <button id="libRandomBtn" class="icon-btn" type="button" title="Manga al azar" aria-label="Manga al azar">🎲</button>
         ${!state.offline ? `<button id="libCatsBtn" class="secondary-btn" type="button" style="padding:6px 9px;font-size:11.5px">Categorías</button>` : ''}
         <button id="libUpdateBtn" class="icon-btn" type="button" title="Actualizar biblioteca" aria-label="Actualizar biblioteca">
           <svg viewBox="0 0 24 24"><path d="M17.6 6.4A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4l-2.4 2.4z"/></svg>
         </button>
       `;
+    const rndBtn = $('libRandomBtn');
+    if (rndBtn) {
+      rndBtn.addEventListener('click', () => {
+        const pool = state.library.filter((m) => (direct ? true : !isMangaSecret(m)) && !isMangaBlockedNsfw(m, false));
+        if (!pool.length) { showToast('Tu biblioteca está vacía'); return; }
+        const unread = pool.filter((m) => Number(m.unreadCount || 0) > 0);
+        const src = unread.length ? unread : pool;
+        const pick = src[Math.floor(Math.random() * src.length)];
+        showToast('🎲 ' + pick.title);
+        navigateHash(`#${direct ? 'rmanga' : 'manga'}/${encodeURIComponent(pick.id)}`);
+      });
+    }
     const directExpBtn = $('libDirectExpBtn');
     if (directExpBtn) directExpBtn.addEventListener('click', () => navigateHash('#explore'));
     const catsBtn = $('libCatsBtn');
@@ -2218,7 +2242,61 @@
       return;
     }
 
-    mainContent.innerHTML = `<div class="manga-grid">${list.map((m) => {
+    // Tarjeta "Seguir leyendo" (1 toque para retomar la última lectura)
+    let continueHtml = '';
+    if (!q && !state.selectedTag && !state.onlyDownloaded && state.selectedCat === 'all') {
+      let latest = null;
+      if (direct && Remote) {
+        const h = Remote.getHistory()[0];
+        if (h) {
+          latest = {
+            mangaId: h.mangaId,
+            chapterId: h.chapterId,
+            title: h.mangaTitle,
+            chapName: h.chapterName,
+            cover: coverUrlFor({ id: h.mangaId, thumbnailUrl: h.thumbnailUrl }, 'remote'),
+            coverId: dlKey(h.mangaId, 'remote'),
+            pct: h.isRead ? 100 : (h.pageCount > 0 ? Math.min(100, Math.round(((h.lastPageRead + 1) / h.pageCount) * 100)) : 25),
+            isRemote: true
+          };
+        }
+      } else {
+        const readOnes = list
+          .filter((m) => m.lastReadChapter && Number(m.lastReadChapter.lastReadAt || 0) > 0)
+          .sort((a, b) => Number(b.lastReadChapter.lastReadAt) - Number(a.lastReadChapter.lastReadAt));
+        const top = readOnes[0];
+        if (top && top.lastReadChapter) {
+          const targetChap = top.firstUnreadChapter || top.lastReadChapter;
+          latest = {
+            mangaId: top.id,
+            chapterId: targetChap.id,
+            title: top.title,
+            chapName: targetChap.name || top.lastReadChapter.name || '',
+            cover: coverUrlFor(top, false),
+            coverId: dlKey(top.id, false),
+            pct: top.unreadCount > 0 ? 60 : 100,
+            isRemote: false
+          };
+        }
+      }
+      if (latest && (!state.offline || isDownloaded(latest.chapterId, latest.isRemote ? 'remote' : false))) {
+        continueHtml = `
+          <div id="continueReadingCard" class="continue-card" data-cont-m="${esc(latest.mangaId)}" data-cont-c="${esc(latest.chapterId)}" data-cont-r="${latest.isRemote ? '1' : '0'}">
+            <img class="continue-thumb" src="${esc(latest.cover)}" data-cover-id="${esc(latest.coverId)}" ${latest.isRemote ? 'referrerpolicy="no-referrer"' : ''} alt="">
+            <div class="continue-body">
+              <div class="continue-eyebrow">Seguir leyendo</div>
+              <div class="continue-title">${esc(latest.title)}</div>
+              <div class="continue-sub">${esc(latest.chapName)}</div>
+              <div class="continue-bar-track"><div class="continue-bar-fill" style="width:${latest.pct}%"></div></div>
+            </div>
+            <button class="list-cta" type="button">Seguir</button>
+          </div>
+        `;
+      }
+    }
+
+    const colsCls = state.prefs.gridCols === 2 ? ' cols-2' : (state.prefs.gridCols === 4 ? ' cols-4' : '');
+    mainContent.innerHTML = `${continueHtml}<div class="manga-grid${colsCls}">${list.map((m) => {
       const dlCount = mangaDownloadCount(m.id, dlScope);
       const dimmed = state.offline && dlCount === 0;
       return `
@@ -2235,6 +2313,15 @@
     }).join('')}</div>`;
 
     attachCoverFallbacks(mainContent);
+    const contCard = $('continueReadingCard');
+    if (contCard) {
+      contCard.addEventListener('click', () => {
+        const mId = contCard.dataset.contM;
+        const cId = contCard.dataset.contC;
+        const isRem = contCard.dataset.contR === '1';
+        navigateHash(`#${isRem ? 'rread' : 'read'}/${encodeURIComponent(mId)}/${encodeURIComponent(cId)}`);
+      });
+    }
     mainContent.querySelectorAll('.manga-card').forEach((card) => {
       card.addEventListener('click', () => navigateHash(`#${direct ? 'rmanga' : 'manga'}/${encodeURIComponent(card.dataset.mangaId)}`));
     });
@@ -3224,9 +3311,28 @@
             <button class="seg-btn ${!p.doublePage ? 'active' : ''}" data-pref-dbl="0">No</button>
           </div>
         </div>
-        <div class="setting-group" style="margin-bottom:0">
+        <div class="setting-group">
           <span class="setting-label">Filtro nocturno: <strong id="setDimVal">${p.dim}%</strong></span>
           <input id="setDimSlider" type="range" min="0" max="70" step="5" value="${p.dim}" style="width:100%;accent-color:var(--accent)">
+        </div>
+        <div class="setting-group">
+          <span class="setting-label">Filtro luz cálida / sepia (descanso visual): <strong id="setWarmVal">${p.warmth || 0}%</strong></span>
+          <input id="setWarmSlider" type="range" min="0" max="45" step="5" value="${p.warmth || 0}" style="width:100%;accent-color:#f59e0b">
+        </div>
+        <div class="setting-group">
+          <span class="setting-label">Columnas de portadas en Biblioteca</span>
+          <div class="seg-control">
+            <button class="seg-btn ${p.gridCols === 2 ? 'active' : ''}" data-pref-cols="2">2 (Grandes)</button>
+            <button class="seg-btn ${(p.gridCols || 3) === 3 ? 'active' : ''}" data-pref-cols="3">3 (Clásico)</button>
+            <button class="seg-btn ${p.gridCols === 4 ? 'active' : ''}" data-pref-cols="4">4 (Compacto)</button>
+          </div>
+        </div>
+        <div class="setting-group" style="margin-bottom:0">
+          <span class="setting-label">Mostrar hora y batería al leer</span>
+          <div class="seg-control two">
+            <button class="seg-btn ${p.showClockBatt ? 'active' : ''}" data-pref-clk="1">Sí</button>
+            <button class="seg-btn ${!p.showClockBatt ? 'active' : ''}" data-pref-clk="0">No</button>
+          </div>
         </div>
       </div>
 
@@ -3259,6 +3365,11 @@
             ${Extras && Extras.hasPin() ? 'Quitar bloqueo PIN' : 'Activar bloqueo PIN (4 dígitos)'}
           </button>
           ${!state.offline ? '<button id="exportBackupBtn" class="secondary-btn" type="button">Backup .tachibk</button>' : ''}
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button id="exportJsonBtn" class="secondary-btn" type="button" style="flex:1;font-size:12px">Exportar ajustes (.json)</button>
+          <button id="importJsonBtn" class="secondary-btn" type="button" style="flex:1;font-size:12px">Importar ajustes</button>
+          <input id="importJsonFile" type="file" accept="application/json,.json" class="hidden">
         </div>
         ${!isStandaloneApp() ? `<button id="settingsInstallBtn" class="primary-btn" type="button" style="margin-bottom:10px">${deferredInstallPrompt ? 'Instalar app ahora' : 'Cómo instalar en pantalla de inicio'}</button>` : ''}
         <a href="/" class="secondary-btn" style="display:block;text-align:center;text-decoration:none;margin-bottom:10px">
@@ -3392,6 +3503,79 @@
       $('setDimVal').textContent = state.prefs.dim + '%';
       savePrefs();
     });
+    $('setWarmSlider').addEventListener('input', (e) => {
+      state.prefs.warmth = parseInt(e.target.value, 10) || 0;
+      $('setWarmVal').textContent = state.prefs.warmth + '%';
+      savePrefs();
+    });
+    mainContent.querySelectorAll('[data-pref-cols]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.gridCols = Number(b.dataset.prefCols); savePrefs(); renderSettings(); });
+    });
+    mainContent.querySelectorAll('[data-pref-clk]').forEach((b) => {
+      b.addEventListener('click', () => { state.prefs.showClockBatt = b.dataset.prefClk === '1'; savePrefs(); renderSettings(); });
+    });
+
+    const expJsonBtn = $('exportJsonBtn');
+    const impJsonBtn = $('importJsonBtn');
+    const impJsonFile = $('importJsonFile');
+    if (expJsonBtn) {
+      expJsonBtn.addEventListener('click', () => {
+        const exportKeys = [
+          PREFS_KEY,
+          'suwayomi_manga_modes_v1',
+          'suwayomi_page_bookmarks_v1',
+          'suwayomi_reading_stats_v1',
+          'suwayomi_remote_config_v1',
+          'suwayomi_remote_library_v1',
+          'suwayomi_remote_history_v1',
+          'suwayomi_remote_progress_v1',
+          'suwayomi_remote_chap_bookmarks_v1'
+        ];
+        const payload = { app: 'suwayomi-movil', exportedAt: new Date().toISOString(), data: {} };
+        for (const k of exportKeys) {
+          const val = localStorage.getItem(k);
+          if (val !== null) payload.data[k] = val;
+        }
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `suwayomi-movil-ajustes-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showToast('Ajustes y biblioteca directa exportados');
+      });
+    }
+    if (impJsonBtn && impJsonFile) {
+      impJsonBtn.addEventListener('click', () => impJsonFile.click());
+      impJsonFile.addEventListener('change', async (ev) => {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        try {
+          const parsed = JSON.parse(await file.text());
+          if (!parsed || parsed.app !== 'suwayomi-movil' || !parsed.data || typeof parsed.data !== 'object') {
+            throw new Error('Archivo no válido');
+          }
+          const allowedPrefix = /^suwayomi_(mobile_prefs|manga_modes|page_bookmarks|reading_stats|remote_)/;
+          let count = 0;
+          for (const [k, v] of Object.entries(parsed.data)) {
+            if (allowedPrefix.test(k) && typeof v === 'string') {
+              localStorage.setItem(k, v);
+              count++;
+            }
+          }
+          state.prefs = loadPrefs();
+          updateRemoteBanner();
+          showToast(`Importados ${count} bloques de configuración`);
+          renderSettings();
+        } catch (err) {
+          showToast('Error al importar: ' + (err.message || 'archivo inválido'));
+        }
+        impJsonFile.value = '';
+      });
+    }
 
     mainContent.querySelectorAll('[data-del-manga-dl]').forEach((b) => {
       b.addEventListener('click', async () => {
@@ -3855,6 +4039,7 @@
               </div>
               ${(!isOff || isRemote) ? `<button class="chap-star-btn ${c.isBookmarked ? 'active' : ''}" data-star-id="${esc(c.id)}" type="button" title="Marcar capítulo">${c.isBookmarked ? '★' : '☆'}</button>` : ''}
               ${chapterDlButtonHtml(c, scope)}
+              <button class="chap-more-btn" data-more-id="${esc(c.id)}" type="button" title="Opciones de capítulo" aria-label="Opciones">⋮</button>
             </div>
           `;
         }).join('') : '<div class="empty-state"><p>No hay capítulos con este filtro.</p></div>'}
@@ -3971,6 +4156,16 @@
       });
     });
 
+    mangaView.querySelectorAll('.chap-more-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const rawId = btn.dataset.moreId;
+        const cId = isRemote ? rawId : Number(rawId);
+        const chap = state.mangaChapters.find((x) => String(x.id) === String(cId));
+        if (chap) openChapterActionsSheet(m, chap, scope);
+      });
+    });
+
     mangaView.querySelectorAll('.chapter-row').forEach((row) => {
       row.addEventListener('click', () => {
         const rawId = row.dataset.chapId;
@@ -4008,6 +4203,7 @@
     const isRemote = (scope === 'remote');
     const dlScope = isRemote ? 'remote' : inVault;
     const r = state.reader;
+    stopAutoScroll();
     clearReaderTimers();
     revokeReaderBlobs();
     r.open = true;
@@ -4165,6 +4361,7 @@
 
   function closeReaderUi() {
     const r = state.reader;
+    stopAutoScroll();
     r.open = false;
     clearReaderTimers();
     revokeReaderBlobs();
@@ -4172,12 +4369,107 @@
     closeReaderSheet();
     readerView.classList.add('hidden');
     readerStage.innerHTML = '';
+    if (readerProgressLine) readerProgressLine.style.width = '0%';
     if (state.manga && !mangaView.classList.contains('hidden')) drawMangaDetail();
   }
+
+  // ---------------- Batería, reloj y auto-scroll manos libres del lector ----------------
+  let batteryPct = null;
+  let batteryCharging = false;
+  if (navigator.getBattery) {
+    navigator.getBattery().then((batt) => {
+      const upd = () => {
+        batteryPct = Math.round((batt.level || 0) * 100);
+        batteryCharging = !!batt.charging;
+      };
+      upd();
+      batt.addEventListener('levelchange', upd);
+      batt.addEventListener('chargingchange', upd);
+    }).catch(() => { });
+  }
+
+  let autoScrollRaf = null;
+  let autoScrollLastTs = 0;
+
+  function isAutoScrolling() {
+    return autoScrollRaf !== null;
+  }
+
+  function stopAutoScroll() {
+    if (autoScrollRaf !== null) {
+      cancelAnimationFrame(autoScrollRaf);
+      autoScrollRaf = null;
+      autoScrollLastTs = 0;
+    }
+    if (readerAutoScrollPill) readerAutoScrollPill.classList.add('hidden');
+  }
+
+  function startAutoScroll() {
+    if (!state.reader.open || effectiveReaderMode() !== 'vertical') {
+      showToast('El auto-scroll funciona en modo Continuo (PDF)');
+      return;
+    }
+    stopAutoScroll();
+    setReaderChrome(false);
+    if (readerAutoScrollPill) readerAutoScrollPill.classList.remove('hidden');
+    autoScrollLastTs = performance.now();
+    const pxPerSec = state.prefs.autoScrollSpeed === 1 ? 42 : (state.prefs.autoScrollSpeed === 3 ? 125 : 78);
+    function step(now) {
+      if (!state.reader.open || effectiveReaderMode() !== 'vertical') {
+        stopAutoScroll();
+        return;
+      }
+      const dt = Math.min(0.1, Math.max(0, (now - autoScrollLastTs) / 1000));
+      autoScrollLastTs = now;
+      const before = readerStage.scrollTop;
+      readerStage.scrollTop = before + pxPerSec * dt;
+      if (readerStage.scrollTop + readerStage.clientHeight >= readerStage.scrollHeight - 4) {
+        stopAutoScroll();
+        return;
+      }
+      autoScrollRaf = requestAnimationFrame(step);
+    }
+    autoScrollRaf = requestAnimationFrame(step);
+  }
+
+  if (readerAutoScrollPill) {
+    readerAutoScrollPill.addEventListener('click', (e) => {
+      e.stopPropagation();
+      stopAutoScroll();
+      showToast('Auto-scroll pausado');
+    });
+  }
+  readerStage.addEventListener('wheel', () => { if (isAutoScrolling()) stopAutoScroll(); }, { passive: true });
+
+  document.addEventListener('keydown', (e) => {
+    if (!state.reader.open) return;
+    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/i.test(e.target.tagName)) return;
+    const mode = effectiveReaderMode();
+    const step = isDoublePageNow() ? 2 : 1;
+    if (e.key === 'Escape') {
+      if (!readerSheet.classList.contains('hidden')) closeReaderSheet();
+      else $('readerBackBtn').click();
+    } else if (e.key === 'ArrowRight') {
+      if (mode === 'vertical') readerStage.scrollBy({ top: window.innerHeight * 0.75, behavior: 'smooth' });
+      else goToPage(state.reader.pageIdx + (mode === 'rtl' ? -step : step));
+    } else if (e.key === 'ArrowLeft') {
+      if (mode === 'vertical') readerStage.scrollBy({ top: -window.innerHeight * 0.75, behavior: 'smooth' });
+      else goToPage(state.reader.pageIdx + (mode === 'rtl' ? step : -step));
+    } else if (e.key === 'ArrowDown' || e.key === ' ') {
+      e.preventDefault();
+      if (mode === 'vertical') readerStage.scrollBy({ top: window.innerHeight * 0.78, behavior: 'smooth' });
+      else goToPage(state.reader.pageIdx + step);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (mode === 'vertical') readerStage.scrollBy({ top: -window.innerHeight * 0.78, behavior: 'smooth' });
+      else goToPage(state.reader.pageIdx - step);
+    }
+  });
 
   function applyReaderVisualPrefs() {
     const p = state.prefs;
     readerDimmer.style.opacity = String((p.dim || 0) / 100);
+    if (readerWarmFilter) readerWarmFilter.style.opacity = String((p.warmth || 0) / 100);
     readerModeQuick.textContent = modeLabel(effectiveReaderMode());
     readerMiniStatus.classList.toggle('hidden', !p.miniStatus);
   }
@@ -4200,9 +4492,21 @@
     r.pageIdx = Math.max(0, Math.min(r.pages.length - 1, idx));
     readerSlider.value = String(r.pageIdx + 1);
     readerPageNow.textContent = String(r.pageIdx + 1);
+    if (readerProgressLine) {
+      const pct = Math.max(0, Math.min(100, ((r.pageIdx + 1) / r.pages.length) * 100));
+      readerProgressLine.style.width = pct.toFixed(1) + '%';
+    }
     const chap = r.chapters[r.chapIdx];
     const chapShort = chap && chap.chapterNumber >= 0 ? `Cap. ${chap.chapterNumber}` : '';
-    readerMiniStatus.textContent = `${chapShort ? chapShort + ' · ' : ''}${r.pageIdx + 1}/${r.pages.length}`;
+    const statusParts = [];
+    if (chapShort) statusParts.push(chapShort);
+    statusParts.push(`${r.pageIdx + 1}/${r.pages.length}`);
+    if (state.prefs.showClockBatt) {
+      const now = new Date();
+      statusParts.push(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+      if (batteryPct !== null) statusParts.push(`${batteryCharging ? '⚡' : '🔋'}${batteryPct}%`);
+    }
+    readerMiniStatus.textContent = statusParts.join(' · ');
     updateBookmarkBtnUi();
 
     syncProgressToServer(r.pageIdx);
@@ -4522,6 +4826,7 @@
   }
 
   readerStage.addEventListener('touchstart', (e) => {
+    if (isAutoScrolling()) stopAutoScroll();
     if (e.touches.length !== 1) return;
     const t = e.touches[0];
     state.reader.touchStartX = t.clientX;
@@ -4713,9 +5018,38 @@
         </div>
       </div>
 
-      <div class="setting-group" style="margin-bottom:0">
+      ${effectiveReaderMode() === 'vertical' ? `
+      <div class="setting-group">
+        <span class="setting-label">Auto-scroll manos libres</span>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <button id="rAutoScrollBtn" class="primary-btn" type="button" style="flex:1;padding:8px 10px;font-size:12.5px">
+            ${isAutoScrolling() ? '⏸ Pausar auto-scroll' : '▶ Iniciar auto-scroll'}
+          </button>
+        </div>
+        <div class="seg-control">
+          <button class="seg-btn ${p.autoScrollSpeed === 1 ? 'active' : ''}" data-raspd="1">Lento</button>
+          <button class="seg-btn ${p.autoScrollSpeed === 2 ? 'active' : ''}" data-raspd="2">Normal</button>
+          <button class="seg-btn ${p.autoScrollSpeed === 3 ? 'active' : ''}" data-raspd="3">Rápido</button>
+        </div>
+      </div>` : ''}
+
+      <div class="setting-group">
         <span class="setting-label">Filtro nocturno (o desliza borde izquierdo): <strong id="rDimVal">${p.dim}%</strong></span>
         <input id="rDimSlider" type="range" min="0" max="70" step="5" value="${p.dim}" style="width:100%;accent-color:var(--accent)">
+      </div>
+
+      <div class="setting-group">
+        <span class="setting-label">Filtro luz cálida / sepia (descanso visual): <strong id="rWarmVal">${p.warmth || 0}%</strong></span>
+        <input id="rWarmSlider" type="range" min="0" max="45" step="5" value="${p.warmth || 0}" style="width:100%;accent-color:#f59e0b">
+      </div>
+
+      <div class="setting-group" style="margin-bottom:0">
+        <span class="setting-label">Hora/batería en esquina · Saltar rápido</span>
+        <div class="seg-control">
+          <button class="seg-btn ${p.showClockBatt ? 'active' : ''}" data-rclk="toggle">${p.showClockBatt ? 'Reloj: Sí' : 'Reloj: No'}</button>
+          <button class="seg-btn" id="rJumpFirst" type="button">⏮ Pág. 1</button>
+          <button class="seg-btn" id="rJumpLast" type="button">⏭ Última</button>
+        </div>
       </div>
     `;
 
@@ -4741,12 +5075,41 @@
     readerSheet.querySelector('[data-rdbl]').addEventListener('click', () => {
       state.prefs.doublePage = !state.prefs.doublePage; savePrefs(); renderReaderPages(); openReaderSettingsSheet();
     });
+    const asBtn = $('rAutoScrollBtn');
+    if (asBtn) {
+      asBtn.addEventListener('click', () => {
+        if (isAutoScrolling()) { stopAutoScroll(); openReaderSettingsSheet(); }
+        else { closeReaderSheet(); startAutoScroll(); }
+      });
+    }
+    readerSheet.querySelectorAll('[data-raspd]').forEach((b) => {
+      b.addEventListener('click', () => {
+        state.prefs.autoScrollSpeed = Number(b.dataset.raspd);
+        savePrefs();
+        if (isAutoScrolling()) startAutoScroll();
+        openReaderSettingsSheet();
+      });
+    });
     $('rDimSlider').addEventListener('input', (e) => {
       state.prefs.dim = parseInt(e.target.value, 10) || 0;
       $('rDimVal').textContent = state.prefs.dim + '%';
       savePrefs();
       applyReaderVisualPrefs();
     });
+    $('rWarmSlider').addEventListener('input', (e) => {
+      state.prefs.warmth = parseInt(e.target.value, 10) || 0;
+      $('rWarmVal').textContent = state.prefs.warmth + '%';
+      savePrefs();
+      applyReaderVisualPrefs();
+    });
+    readerSheet.querySelector('[data-rclk]').addEventListener('click', () => {
+      state.prefs.showClockBatt = !state.prefs.showClockBatt;
+      savePrefs();
+      updatePageUi(state.reader.pageIdx);
+      openReaderSettingsSheet();
+    });
+    $('rJumpFirst').addEventListener('click', () => { closeReaderSheet(); goToPage(0); });
+    $('rJumpLast').addEventListener('click', () => { closeReaderSheet(); goToPage(Math.max(0, state.reader.pages.length - 1)); });
   }
 
   function openReaderChaptersSheet() {
@@ -4790,6 +5153,119 @@
       if (curRow) curRow.scrollIntoView({ block: 'center' });
     }
   }
+
+  // ---------------- Acciones rápidas de capítulo (⋮) y Pull-to-Refresh ----------------
+  function openChapterActionsSheet(manga, chap, scope = false) {
+    const inVault = (scope === true || scope === 'vault');
+    const isRemote = (scope === 'remote');
+    const isOff = inVault ? state.vaultOffline : state.offline;
+    const asc = state.mangaChapters.slice().sort((a, b) => a.sourceOrder - b.sourceOrder);
+    const idx = asc.findIndex((c) => String(c.id) === String(chap.id));
+    const prevUnread = idx >= 0 ? asc.slice(0, idx + 1).filter((c) => !c.isRead) : [];
+    const nextTen = idx >= 0 ? asc.slice(idx, idx + 10).filter((c) => !isDownloaded(c.id, scope)) : [];
+
+    openAppSheet(`
+      <div class="sheet-title">
+        <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:78%">${esc(chap.name)}</span>
+        <button id="caClose" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button id="caToggleRead" class="secondary-btn" type="button" style="text-align:left">
+          ${chap.isRead ? '○ Marcar como NO leído' : '✓ Marcar como leído'}
+        </button>
+        ${prevUnread.length ? `<button id="caMarkPrev" class="secondary-btn" type="button" style="text-align:left">✓✓ Marcar este y ${Math.max(0, prevUnread.length - 1)} anteriores como leídos</button>` : ''}
+        ${!isOff && nextTen.length ? `<button id="caDlNext10" class="secondary-btn" type="button" style="text-align:left">↓ Descargar siguientes ${nextTen.length} desde aquí</button>` : ''}
+      </div>
+    `);
+
+    async function setChapterReadState(c, isReadVal) {
+      c.isRead = isReadVal;
+      if (isReadVal) c.lastPageRead = 0;
+      if (isRemote && Remote) {
+        Remote.saveChapterProgress(c.id, { isRead: isReadVal, lastPageRead: 0 });
+      } else if (inVault && Extras && Extras.isVaultIncognito()) {
+        Extras.saveVaultChapterProgress('v_' + c.id, { isRead: isReadVal, lastPageRead: 0 });
+      } else if (!isOff) {
+        await gql(M_UPDATE_CHAPTER, { id: c.id, patch: { isRead: isReadVal } }, 8000, inVault).catch(() => { });
+      } else if (Offline && !inVault) {
+        await Offline.queueProgress(c.id, { isRead: isReadVal, lastPageRead: 0 });
+      }
+      if (Offline) await Offline.updateLocalChapterProgress(dlKey(manga.id, scope), c.id, { isRead: isReadVal });
+    }
+
+    $('caClose').addEventListener('click', closeAppSheet);
+    $('caToggleRead').addEventListener('click', async () => {
+      closeAppSheet();
+      await setChapterReadState(chap, !chap.isRead);
+      showToast(chap.isRead ? 'Marcado como leído' : 'Marcado como no leído');
+      drawMangaDetail();
+    });
+    const prevBtn = $('caMarkPrev');
+    if (prevBtn) {
+      prevBtn.addEventListener('click', async () => {
+        closeAppSheet();
+        showToast(`Marcando ${prevUnread.length} capítulo(s) como leídos...`);
+        for (const c of prevUnread) {
+          await setChapterReadState(c, true);
+        }
+        showToast(`${prevUnread.length} capítulo(s) marcados como leídos`);
+        drawMangaDetail();
+      });
+    }
+    const dl10Btn = $('caDlNext10');
+    if (dl10Btn) {
+      dl10Btn.addEventListener('click', () => {
+        closeAppSheet();
+        nextTen.forEach((c) => enqueueChapterDownload(manga, state.mangaChapters, c, true, scope));
+        showToast(`Añadidos ${nextTen.length} capítulo(s) a descargas`);
+      });
+    }
+  }
+
+  // Pull-to-refresh suave en Biblioteca, Novedades y Explorar
+  let ptrStartY = 0;
+  let ptrPulling = false;
+  let ptrReady = false;
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    if (state.reader.open || state.vaultOpen || !mangaView.classList.contains('hidden')) return;
+    if (!['library', 'updates', 'explore'].includes(state.tab)) return;
+    if (window.scrollY > 4) return;
+    ptrStartY = e.touches[0].clientY;
+    ptrPulling = true;
+    ptrReady = false;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (e) => {
+    if (!ptrPulling || e.touches.length !== 1) return;
+    const dy = e.touches[0].clientY - ptrStartY;
+    if (dy > 28 && window.scrollY <= 4) {
+      ptrReady = dy > 82;
+      if (ptrIndicator) {
+        ptrIndicator.textContent = ptrReady ? '↻ Suelta para actualizar' : '↓ Desliza para actualizar';
+        ptrIndicator.classList.remove('hidden');
+      }
+    } else if (ptrIndicator && !ptrIndicator.classList.contains('hidden')) {
+      ptrIndicator.classList.add('hidden');
+      ptrReady = false;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', () => {
+    if (!ptrPulling) return;
+    ptrPulling = false;
+    if (ptrIndicator) ptrIndicator.classList.add('hidden');
+    if (ptrReady) {
+      ptrReady = false;
+      showToast('Actualizando...');
+      if (state.tab === 'library') renderLibrary(true);
+      else if (state.tab === 'updates') renderUpdates();
+      else if (state.tab === 'explore') {
+        if (isDirectMode()) { state.remotePage = 1; state.remoteMangas = []; renderDirectExplore(true); }
+        else renderExplore();
+      }
+    }
+  }, { passive: true });
 
   // ---------------- Arranque ----------------
   checkStartupPin();
