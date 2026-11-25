@@ -6,6 +6,7 @@
   const PREFS_KEY = 'suwayomi_mobile_prefs_v3';
   const Offline = window.SuwayomiOffline;
   const Extras = window.SuwayomiExtras;
+  const Remote = window.SuwayomiRemote;
 
   const DEFAULT_PREFS = {
     mode: 'vertical',     // 'vertical' (PDF continuo) | 'rtl' | 'ltr'
@@ -59,6 +60,13 @@
     globalSearchQuery: '',
     globalSearchTag: '',
     globalSearchResults: [],
+    // Modo directo (MangaDex sin PC)
+    remoteMode: 'POPULAR', // 'POPULAR' | 'LATEST' | 'SEARCH'
+    remoteQuery: '',
+    remoteTag: '',
+    remotePage: 1,
+    remoteHasNext: false,
+    remoteMangas: [],
     // Descargas locales
     downloads: new Map(),
     downloadsByManga: new Map(),
@@ -68,6 +76,7 @@
     // Detalle de manga
     manga: null,
     mangaInVault: false,
+    mangaIsRemote: false,
     mangaChapters: [],
     chapterFilter: 'all', // 'all' | 'unread' | 'downloaded' | 'bookmarked'
     chapterDesc: true,
@@ -91,6 +100,7 @@
     reader: {
       open: false,
       inVault: false,
+      isRemote: false,
       manga: null,
       chapters: [],
       chapIdx: 0,
@@ -143,8 +153,12 @@
   const readerSheetBackdrop = $('readerSheetBackdrop');
   const readerSheet = $('readerSheet');
   const toastEl = $('toast');
+  const remoteBanner = $('remoteBanner');
+  const remoteBannerText = $('remoteBannerText');
+  const remoteSwitchBtn = $('remoteSwitchBtn');
   const offlineBanner = $('offlineBanner');
   const offlineRetryBtn = $('offlineRetryBtn');
+  const offlineRemoteBtn = $('offlineRemoteBtn');
   const installBanner = $('installBanner');
   const installBannerBtn = $('installBannerBtn');
   const installBannerClose = $('installBannerClose');
@@ -343,29 +357,129 @@
     return mode !== 'vertical' && state.prefs.doublePage && window.innerWidth > window.innerHeight && window.innerWidth >= 680;
   }
 
-  function dlKey(id, inVault = false) {
-    return inVault ? ('v_' + Number(id)) : Number(id);
+  function getConnMode() {
+    return (Remote && Remote.getConfig().mode) || 'local';
   }
 
-  function isDownloaded(chapterId, inVault = false) {
-    return state.downloads.has(dlKey(chapterId, inVault));
+  function isDirectMode() {
+    return getConnMode() === 'direct';
   }
 
-  function mangaDownloadCount(mangaId, inVault = false) {
-    return state.downloadsByManga.get(dlKey(mangaId, inVault)) || 0;
+  function isRemoteSuwayomiMode() {
+    return getConnMode() === 'remote_suwayomi';
+  }
+
+  function updateRemoteBanner() {
+    if (!remoteBanner || !remoteBannerText) return;
+    const mode = getConnMode();
+    if (mode === 'direct') {
+      const cfg = Remote.getConfig();
+      const langTxt = (cfg.lang || 'es').toUpperCase();
+      remoteBannerText.textContent = Remote.needsWorkerSetup()
+        ? 'Modo directo (sin PC) · Falta configurar puente gratis'
+        : `Modo directo (MangaDex · ${langTxt} · Sin PC)`;
+      remoteBanner.classList.remove('hidden');
+    } else if (mode === 'remote_suwayomi') {
+      const cfg = Remote.getConfig();
+      let host = 'Sin URL';
+      try { if (cfg.suwayomiUrl) host = new URL(cfg.suwayomiUrl).host; } catch { host = cfg.suwayomiUrl; }
+      remoteBannerText.textContent = `Suwayomi remoto · ${host}`;
+      remoteBanner.classList.remove('hidden');
+    } else {
+      remoteBanner.classList.add('hidden');
+    }
+  }
+
+  function switchConnectionMode(nextMode) {
+    if (!Remote) return;
+    Remote.saveConfig({ mode: nextMode });
+    state.offline = false;
+    state.library = [];
+    state.categories = [];
+    state.updates = [];
+    state.recent = [];
+    state.sources = [];
+    state.activeSource = null;
+    state.sourceMangas = [];
+    state.globalSearchResults = [];
+    state.remoteMangas = [];
+    state.remotePage = 1;
+    if (offlineBanner) offlineBanner.classList.add('hidden');
+    updateRemoteBanner();
+  }
+
+  function openWorkerSetupSheet() {
+    if (!Remote) return;
+    openAppSheet(`
+      <div class="sheet-title">
+        <span>Puente gratuito Cloudflare (2 min)</span>
+        <button id="wkCloseBtn" class="secondary-btn" type="button" style="padding:5px 10px;font-size:12px">Cerrar</button>
+      </div>
+      <p style="margin:0 0 8px;font-size:12.5px;color:var(--muted);line-height:1.45">
+        El navegador bloquea peticiones directas a MangaDex (CORS). Con una cuenta gratuita de Cloudflare Workers (100.000 peticiones/día gratis, sin tarjeta) tienes tu puente privado en 2 minutos:
+      </p>
+      <ol style="margin:0 0 10px;padding-left:18px;font-size:12px;color:#d6dde8;line-height:1.5">
+        <li>Entra en <strong>dash.cloudflare.com</strong> → <strong>Workers &amp; Pages</strong> → <strong>Create Worker</strong>.</li>
+        <li>Pulsa <strong>Deploy</strong> y luego <strong>Edit code</strong>.</li>
+        <li>Borra el código de ejemplo, pega el de abajo y pulsa <strong>Deploy</strong>.</li>
+        <li>Copia tu URL <code>https://tu-worker.workers.dev</code> y pégala en Ajustes.</li>
+      </ol>
+      <div class="worker-code-box" id="wkCodeBox">${esc(Remote.WORKER_SNIPPET)}</div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button id="wkCopyBtn" class="primary-btn" type="button" style="flex:1;padding:10px">Copiar código</button>
+        <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener" class="secondary-btn" style="text-decoration:none;display:inline-flex;align-items:center">Abrir Cloudflare</a>
+      </div>
+    `);
+    $('wkCloseBtn').addEventListener('click', closeAppSheet);
+    $('wkCopyBtn').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(Remote.WORKER_SNIPPET);
+        showToast('Código copiado al portapapeles');
+      } catch {
+        const range = document.createRange();
+        range.selectNodeContents($('wkCodeBox'));
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        showToast('Código seleccionado: pulsa Copiar');
+      }
+    });
+  }
+
+  function dlKey(id, scope = false) {
+    if (scope === true || scope === 'vault') return 'v_' + Number(id);
+    if (scope === 'remote') return String(id).startsWith('r_') ? String(id) : ('r_' + String(id));
+    if (typeof id === 'string' && (id.startsWith('v_') || id.startsWith('r_'))) return id;
+    return Number(id);
+  }
+
+  function isDownloaded(chapterId, scope = false) {
+    return state.downloads.has(dlKey(chapterId, scope));
+  }
+
+  function mangaDownloadCount(mangaId, scope = false) {
+    return state.downloadsByManga.get(dlKey(mangaId, scope)) || 0;
   }
 
   function assetUrl(rawUrl, inVault = false) {
     if (!rawUrl) return '';
+    if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
     if (inVault && rawUrl.startsWith('/api/')) return '/movil/__vault__' + rawUrl;
+    if (!inVault && isRemoteSuwayomiMode() && rawUrl.startsWith('/')) {
+      const base = Remote.getConfig().suwayomiUrl;
+      if (base) return base + rawUrl;
+    }
     return rawUrl;
   }
 
-  function coverUrlFor(manga, inVault = false) {
+  function coverUrlFor(manga, scope = false) {
     if (!manga) return '';
-    const isOff = inVault ? state.vaultOffline : state.offline;
-    if (isOff || !manga.thumbnailUrl) return `/movil/__offline__/cover/${dlKey(manga.id, inVault)}`;
-    return assetUrl(manga.thumbnailUrl, inVault);
+    const isVault = (scope === true || scope === 'vault');
+    const isRem = (scope === 'remote');
+    const isOff = isVault ? state.vaultOffline : state.offline;
+    if (isOff || !manga.thumbnailUrl) return `/movil/__offline__/cover/${dlKey(manga.id, scope)}`;
+    if (isRem) return manga.thumbnailUrl;
+    return assetUrl(manga.thumbnailUrl, isVault);
   }
 
   function attachCoverFallbacks(root) {
@@ -375,7 +489,7 @@
         if (img.dataset.fallbackTried) return;
         img.dataset.fallbackTried = '1';
         const cid = img.dataset.coverId;
-        const key = cid.startsWith('v_') ? cid : Number(cid);
+        const key = (cid.startsWith('v_') || cid.startsWith('r_')) ? cid : Number(cid);
         const blobUrl = await Offline.getCachedCoverBlobUrl(key);
         if (blobUrl) img.src = blobUrl;
       });
@@ -412,7 +526,9 @@
     'Terror', 'Artes Marciales', 'Deportes', 'Histórico', 'Psicológico', 'Webtoon'
   ];
 
-  async function openTagExplorer(tag, inVault = false) {
+  async function openTagExplorer(tag, scope = false) {
+    const inVault = (scope === true || scope === 'vault');
+    const isRem = (scope === 'remote' || (!inVault && isDirectMode()));
     const cleanTag = String(tag || '').trim();
     if (!cleanTag) return;
     if (shouldHideNsfw(inVault) && Extras && Extras.isNsfwTag(cleanTag)) {
@@ -420,13 +536,16 @@
       return;
     }
 
-    const libPool = (inVault ? state.vaultLibrary : state.library).filter((m) => {
-      if (!inVault && isMangaSecret(m)) return false;
+    const baseLib = inVault ? state.vaultLibrary : (isRem && Remote ? Remote.getLibraryList() : state.library);
+    const libPool = baseLib.filter((m) => {
+      if (!inVault && !isRem && isMangaSecret(m)) return false;
       if (isMangaBlockedNsfw(m, inVault)) return false;
       return Extras && Extras.mangaHasTag(m, cleanTag);
     });
 
     const isOff = inVault ? state.vaultOffline : state.offline;
+    const hashPrefix = inVault ? 'vmanga' : (isRem ? 'rmanga' : 'manga');
+    const coverScope = inVault ? true : (isRem ? 'remote' : false);
 
     openAppSheet(`
       <div class="sheet-title">
@@ -435,12 +554,12 @@
       </div>
       <div style="margin-bottom:14px">
         <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px">
-          En ${inVault ? 'la bóveda' : 'tu biblioteca'} (${libPool.length})
+          En ${inVault ? 'la bóveda' : (isRem ? 'tu biblioteca directa' : 'tu biblioteca')} (${libPool.length})
         </div>
         ${libPool.length ? `<div class="manga-grid">${libPool.map((m) => `
-          <div class="manga-card" data-tag-open-m="${m.id}">
+          <div class="manga-card" data-tag-open-m="${esc(m.id)}">
             <div class="manga-cover-wrap">
-              <img src="${esc(coverUrlFor(m, inVault))}" data-cover-id="${dlKey(m.id, inVault)}" alt="" loading="lazy">
+              <img src="${esc(coverUrlFor(m, coverScope))}" data-cover-id="${esc(dlKey(m.id, coverScope))}" ${isRem ? 'referrerpolicy="no-referrer"' : ''} alt="" loading="lazy">
               <div class="manga-cover-grad"></div>
               <div class="manga-card-title">${esc(m.title)}</div>
             </div>
@@ -448,10 +567,10 @@
         `).join('')}</div>` : '<p style="margin:0;font-size:12.5px;color:var(--muted)">Ningún manga con esta etiqueta en tu biblioteca todavía.</p>'}
       </div>
       <div>
-        <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px">En tus fuentes instaladas</div>
+        <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px">${isRem ? 'En MangaDex (Modo directo)' : 'En tus fuentes instaladas'}</div>
         <div id="tagRemoteWrap">
           ${isOff
-            ? '<p style="font-size:12.5px;color:var(--muted)">Sin conexión con el PC para buscar en fuentes.</p>'
+            ? '<p style="font-size:12.5px;color:var(--muted)">Sin conexión para buscar en fuentes.</p>'
             : '<div class="spinner"></div>'}
         </div>
       </div>
@@ -462,13 +581,36 @@
     appSheet.querySelectorAll('[data-tag-open-m]').forEach((c) => {
       c.addEventListener('click', () => {
         closeAppSheet();
-        navigateHash(`#${inVault ? 'vmanga' : 'manga'}/${c.dataset.tagOpenM}`);
+        navigateHash(`#${hashPrefix}/${c.dataset.tagOpenM}`);
       });
     });
 
     if (isOff) return;
 
     try {
+      if (isRem && Remote) {
+        const res = await Remote.browseMangas({ tag: cleanTag, page: 1, hideNsfw: shouldHideNsfw(false) });
+        const mangas = (res.mangas || []).filter((m) => !isMangaBlockedNsfw(m, false)).slice(0, 18);
+        const wrap = $('tagRemoteWrap');
+        if (!wrap) return;
+        wrap.innerHTML = mangas.length ? `<div class="manga-grid">${mangas.map((m) => `
+          <div class="manga-card" data-tag-rem-m="${esc(m.id)}">
+            <div class="manga-cover-wrap">
+              <img src="${esc(m.thumbnailUrl || '')}" referrerpolicy="no-referrer" alt="" loading="lazy">
+              <div class="manga-cover-grad"></div>
+              <div class="manga-card-title">${esc(m.title)}</div>
+            </div>
+          </div>
+        `).join('')}</div>` : '<p style="font-size:12.5px;color:var(--muted)">Sin resultados en MangaDex para esta etiqueta.</p>';
+        wrap.querySelectorAll('[data-tag-rem-m]').forEach((c) => {
+          c.addEventListener('click', () => {
+            closeAppSheet();
+            navigateHash(`#rmanga/${c.dataset.tagRemM}`);
+          });
+        });
+        return;
+      }
+
       const srcs = inVault
         ? state.vaultSources
         : (await ensureAllSourcesLoaded()).filter((s) => (!Extras || !Extras.isSourceHidden(s.id)) && !isSourceBlockedNsfw(s, false));
@@ -506,7 +648,7 @@
       wrap.querySelectorAll('[data-tag-rem-m]').forEach((c) => {
         c.addEventListener('click', () => {
           closeAppSheet();
-          navigateHash(`#${inVault ? 'vmanga' : 'manga'}/${c.dataset.tagRemM}`);
+          navigateHash(`#${hashPrefix}/${c.dataset.tagRemM}`);
         });
       });
     } catch {
@@ -1092,13 +1234,31 @@
   function setOfflineMode(isOff) {
     const wasOff = state.offline;
     state.offline = !!isOff;
-    if (offlineBanner) offlineBanner.classList.toggle('hidden', !state.offline);
-    if (wasOff && !state.offline) flushPendingSyncs();
+    if (offlineBanner) {
+      offlineBanner.classList.toggle('hidden', !state.offline || isDirectMode());
+    }
+    if (wasOff && !state.offline && !isDirectMode()) flushPendingSyncs();
+  }
+
+  if (remoteSwitchBtn) {
+    remoteSwitchBtn.addEventListener('click', () => navigateHash('#settings'));
+  }
+  if (offlineRemoteBtn) {
+    offlineRemoteBtn.addEventListener('click', () => {
+      if (Remote && Remote.getDirectApiBase()) {
+        switchConnectionMode('direct');
+        showToast('Modo directo activado (MangaDex · Sin PC)');
+        navigateHash('#explore');
+      } else {
+        navigateHash('#settings');
+        showToast('Configura el Modo remoto en Ajustes');
+      }
+    });
   }
 
   if (offlineRetryBtn) {
     offlineRetryBtn.addEventListener('click', async () => {
-      showToast('Comprobando conexión con el PC...');
+      showToast(isRemoteSuwayomiMode() ? 'Comprobando servidor remoto...' : 'Comprobando conexión con el PC...');
       setOfflineMode(false);
       await handleRoute();
     });
@@ -1216,17 +1376,19 @@
     else if (state.tab === 'settings') renderSettings();
   }
 
-  function enqueueChapterDownload(manga, chapters, chapter, silent = false, inVault = false) {
+  function enqueueChapterDownload(manga, chapters, chapter, silent = false, scope = false) {
+    const inVault = (scope === true || scope === 'vault');
+    const isRemote = (scope === 'remote');
     if (inVault ? state.vaultOffline : state.offline) {
-      if (!silent) showToast('Sin conexión: conéctate al PC para descargar capítulos.');
+      if (!silent) showToast('Sin conexión: conéctate para descargar capítulos.');
       return;
     }
-    const cKey = dlKey(chapter.id, inVault);
-    if (isDownloaded(chapter.id, inVault)) return;
+    const cKey = dlKey(chapter.id, scope);
+    if (isDownloaded(chapter.id, scope)) return;
     if (state.activeDownload && state.activeDownload.chapterKey === cKey) return;
     if (state.downloadQueue.some((q) => q.chapterKey === cKey)) return;
 
-    state.downloadQueue.push({ manga, chapters, chapter, inVault, chapterKey: cKey });
+    state.downloadQueue.push({ manga, chapters, chapter, inVault, isRemote, scope, chapterKey: cKey });
     refreshVisibleAfterDownload();
     processDownloadQueue();
   }
@@ -1239,10 +1401,13 @@
       while (state.downloadQueue.length > 0 && !state.downloadsPaused) {
         const job = state.downloadQueue.shift();
         const inVault = !!job.inVault;
+        const isRemote = !!job.isRemote;
+        const scope = isRemote ? 'remote' : inVault;
         state.activeDownload = {
           chapterId: job.chapter.id,
           chapterKey: job.chapterKey,
           inVault,
+          isRemote,
           name: job.chapter.name,
           mangaTitle: job.manga ? job.manga.title : '',
           done: 0,
@@ -1251,19 +1416,24 @@
         refreshVisibleAfterDownload();
 
         try {
-          const pgData = await gql(M_FETCH_PAGES, { chapterId: job.chapter.id }, 25000, inVault);
-          const rawPages = (pgData.fetchChapterPages && pgData.fetchChapterPages.pages) || [];
-          const pages = rawPages.map((u) => assetUrl(u, inVault));
+          let pages = [];
+          if (isRemote && Remote) {
+            pages = await Remote.fetchChapterPages(job.chapter.id);
+          } else {
+            const pgData = await gql(M_FETCH_PAGES, { chapterId: job.chapter.id }, 25000, inVault);
+            const rawPages = (pgData.fetchChapterPages && pgData.fetchChapterPages.pages) || [];
+            pages = rawPages.map((u) => assetUrl(u, inVault));
+          }
           if (!pages.length) throw new Error('Sin páginas');
 
           state.activeDownload.total = pages.length;
           const dlManga = job.manga ? Object.assign({}, job.manga, {
-            id: dlKey(job.manga.id, inVault),
-            thumbnailUrl: assetUrl(job.manga.thumbnailUrl, inVault)
+            id: dlKey(job.manga.id, scope),
+            thumbnailUrl: isRemote ? (job.manga.thumbnailUrl || '') : assetUrl(job.manga.thumbnailUrl, inVault)
           }) : null;
           const dlChap = Object.assign({}, job.chapter, {
-            id: dlKey(job.chapter.id, inVault),
-            mangaId: dlKey(job.manga ? job.manga.id : job.chapter.mangaId, inVault)
+            id: dlKey(job.chapter.id, scope),
+            mangaId: dlKey(job.manga ? job.manga.id : job.chapter.mangaId, scope)
           });
 
           await Offline.downloadChapter({
@@ -1332,9 +1502,14 @@
     for (let i = 0; i < 3; i++) worker();
   }
 
-  // ---------------- GraphQL (normal o bóveda aislada) ----------------
+  // ---------------- GraphQL (local, remoto externo o bóveda aislada) ----------------
   async function gql(query, variables = {}, timeoutMs = 12000, inVault = false) {
-    const endpoint = inVault ? VAULT_API_URL : API_URL;
+    let endpoint = inVault ? VAULT_API_URL : API_URL;
+    if (!inVault && isRemoteSuwayomiMode()) {
+      const base = Remote ? Remote.getConfig().suwayomiUrl : '';
+      if (!base) throw new Error('Configura la URL del servidor Suwayomi remoto en Ajustes');
+      endpoint = base + '/api/graphql';
+    }
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
     try {
@@ -1732,32 +1907,34 @@
     const parts = raw.split('/');
     const view = parts[0] || 'library';
 
-    if ((view === 'read' || view === 'vread') && parts[1] && parts[2]) {
-      const mId = parseInt(parts[1], 10);
-      const cId = parseInt(parts[2], 10);
-      const pg = parts[3] ? parseInt(parts[3], 10) : null;
+    if ((view === 'read' || view === 'vread' || view === 'rread') && parts[1] && parts[2]) {
+      const isRemote = (view === 'rread');
       const inVault = (view === 'vread');
+      const mId = isRemote ? decodeURIComponent(parts[1]) : parseInt(parts[1], 10);
+      const cId = isRemote ? decodeURIComponent(parts[2]) : parseInt(parts[2], 10);
+      const pg = parts[3] ? parseInt(parts[3], 10) : null;
       if (inVault && !state.vaultOpen) {
         navigateHash('#library');
         return;
       }
       if (mId && cId) {
-        await openReader(mId, cId, pg, inVault);
+        await openReader(mId, cId, pg, isRemote ? 'remote' : inVault);
         return;
       }
     } else if (state.reader.open) {
       closeReaderUi();
     }
 
-    if ((view === 'manga' || view === 'vmanga') && parts[1]) {
-      const mId = parseInt(parts[1], 10);
+    if ((view === 'manga' || view === 'vmanga' || view === 'rmanga') && parts[1]) {
+      const isRemote = (view === 'rmanga');
       const inVault = (view === 'vmanga');
+      const mId = isRemote ? decodeURIComponent(parts[1]) : parseInt(parts[1], 10);
       if (inVault && !state.vaultOpen) {
         navigateHash('#library');
         return;
       }
       if (mId) {
-        await openMangaDetail(mId, false, inVault);
+        await openMangaDetail(mId, false, isRemote ? 'remote' : inVault);
         return;
       }
     } else {
@@ -1841,28 +2018,40 @@
   }
 
   async function renderLibrary(forceReload = false) {
+    const direct = isDirectMode();
     headerTitle.textContent = 'Biblioteca';
-    headerActions.innerHTML = `
-      ${!state.offline ? `<button id="libCatsBtn" class="secondary-btn" type="button" style="padding:6px 9px;font-size:11.5px">Categorías</button>` : ''}
-      <button id="libUpdateBtn" class="icon-btn" type="button" title="Actualizar biblioteca" aria-label="Actualizar biblioteca">
-        <svg viewBox="0 0 24 24"><path d="M17.6 6.4A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4l-2.4 2.4z"/></svg>
-      </button>
-    `;
+    headerActions.innerHTML = direct
+      ? `<button id="libDirectExpBtn" class="secondary-btn" type="button" style="padding:6px 9px;font-size:11.5px">+ Explorar</button>`
+      : `
+        ${!state.offline ? `<button id="libCatsBtn" class="secondary-btn" type="button" style="padding:6px 9px;font-size:11.5px">Categorías</button>` : ''}
+        <button id="libUpdateBtn" class="icon-btn" type="button" title="Actualizar biblioteca" aria-label="Actualizar biblioteca">
+          <svg viewBox="0 0 24 24"><path d="M17.6 6.4A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4l-2.4 2.4z"/></svg>
+        </button>
+      `;
+    const directExpBtn = $('libDirectExpBtn');
+    if (directExpBtn) directExpBtn.addEventListener('click', () => navigateHash('#explore'));
     const catsBtn = $('libCatsBtn');
     if (catsBtn) catsBtn.addEventListener('click', openCategoriesManager);
-    $('libUpdateBtn').addEventListener('click', async () => {
-      if (!state.offline) {
-        try {
-          await gql(M_UPDATE_LIBRARY);
-          showToast('Actualizando capítulos nuevos en el servidor...');
-        } catch { }
-      }
-      renderLibrary(true);
-    });
+    const updBtn = $('libUpdateBtn');
+    if (updBtn) {
+      updBtn.addEventListener('click', async () => {
+        if (!state.offline) {
+          try {
+            await gql(M_UPDATE_LIBRARY);
+            showToast('Actualizando capítulos nuevos en el servidor...');
+          } catch { }
+        }
+        renderLibrary(true);
+      });
+    }
 
     await refreshDownloadsIndex();
 
-    if (!state.library.length || forceReload) {
+    if (direct) {
+      setOfflineMode(!navigator.onLine);
+      state.categories = [];
+      state.library = Remote ? Remote.getLibraryList() : [];
+    } else if (!state.library.length || forceReload) {
       mainContent.innerHTML = '<div class="spinner"></div>';
       try {
         const data = await gql(Q_LIBRARY, {}, 7000);
@@ -1881,9 +2070,9 @@
         state.library = (snap && snap.library) || [];
         if (Offline) {
           const savedMangas = await Offline.getAllSavedMangas();
-          const knownIds = new Set(state.library.map((m) => m.id));
+          const knownIds = new Set(state.library.map((m) => String(m.id)));
           for (const entry of savedMangas) {
-            if (entry.manga && !knownIds.has(entry.manga.id) && mangaDownloadCount(entry.manga.id) > 0) {
+            if (entry.manga && !String(entry.id).startsWith('v_') && !String(entry.id).startsWith('r_') && !knownIds.has(String(entry.manga.id)) && mangaDownloadCount(entry.manga.id) > 0) {
               state.library.push(entry.manga);
             }
           }
@@ -1892,9 +2081,10 @@
     }
 
     headerSub.classList.remove('hidden');
-    const visibleAll = state.library.filter((m) => !isMangaSecret(m) && !isMangaBlockedNsfw(m, false));
-    const usedCats = state.categories.filter((c) => c.id !== 0);
-    const dlMangasCount = visibleAll.filter((m) => mangaDownloadCount(m.id) > 0).length;
+    const dlScope = direct ? 'remote' : false;
+    const visibleAll = state.library.filter((m) => (direct ? true : !isMangaSecret(m)) && !isMangaBlockedNsfw(m, false));
+    const usedCats = direct ? [] : state.categories.filter((c) => c.id !== 0);
+    const dlMangasCount = visibleAll.filter((m) => mangaDownloadCount(m.id, dlScope) > 0).length;
 
     headerSub.innerHTML = `
       <div style="display:flex;gap:8px;align-items:center">
@@ -1977,14 +2167,16 @@
   }
 
   function drawLibraryGrid() {
+    const direct = isDirectMode();
+    const dlScope = direct ? 'remote' : false;
     const q = state.librarySearch.trim().toLowerCase();
     let list = state.library.filter((m) => {
-      if (isMangaSecret(m)) return false;
+      if (!direct && isMangaSecret(m)) return false;
       if (isMangaBlockedNsfw(m, false)) return false;
       if (state.selectedTag && Extras && !Extras.mangaHasTag(m, state.selectedTag)) return false;
       if (q && !m.title.toLowerCase().includes(q)) return false;
-      if (state.onlyDownloaded && mangaDownloadCount(m.id) === 0) return false;
-      if (!state.onlyDownloaded && state.selectedCat !== 'all') {
+      if (state.onlyDownloaded && mangaDownloadCount(m.id, dlScope) === 0) return false;
+      if (!direct && !state.onlyDownloaded && state.selectedCat !== 'all') {
         const cats = (m.categories && m.categories.nodes) || [];
         return cats.some((c) => String(c.id) === String(state.selectedCat));
       }
@@ -1993,8 +2185,8 @@
 
     list = list.slice().sort((a, b) => {
       if (state.offline) {
-        const da = mangaDownloadCount(a.id) > 0 ? 1 : 0;
-        const db = mangaDownloadCount(b.id) > 0 ? 1 : 0;
+        const da = mangaDownloadCount(a.id, dlScope) > 0 ? 1 : 0;
+        const db = mangaDownloadCount(b.id, dlScope) > 0 ? 1 : 0;
         if (db !== da) return db - da;
       }
       if (state.librarySort === 'lastRead') {
@@ -2016,20 +2208,23 @@
     if (!list.length) {
       mainContent.innerHTML = `
         <div class="empty-state">
-          <h3>${state.onlyDownloaded ? 'Sin capítulos descargados' : (state.offline ? 'Sin conexión y sin datos guardados' : 'Sin resultados')}</h3>
-          <p>${state.onlyDownloaded ? 'Abre un manga con el PC encendido y pulsa ↓ para descargar capítulos.' : 'Prueba con otro filtro o añade mangas desde Explorar.'}</p>
+          <h3>${state.onlyDownloaded ? 'Sin capítulos descargados' : (direct ? 'Tu biblioteca directa está vacía' : (state.offline ? 'Sin conexión y sin datos guardados' : 'Sin resultados'))}</h3>
+          <p>${direct ? 'Ve a <strong>Explorar</strong> para buscar mangas en MangaDex sin PC y añadirlos aquí.' : (state.onlyDownloaded ? 'Abre un manga con conexión y pulsa ↓ para descargar capítulos.' : 'Prueba con otro filtro o añade mangas desde Explorar.')}</p>
+          ${direct ? '<button id="libEmptyGoExp" class="primary-btn" type="button" style="max-width:220px">Ir a Explorar</button>' : ''}
         </div>
       `;
+      const goExp = $('libEmptyGoExp');
+      if (goExp) goExp.addEventListener('click', () => navigateHash('#explore'));
       return;
     }
 
     mainContent.innerHTML = `<div class="manga-grid">${list.map((m) => {
-      const dlCount = mangaDownloadCount(m.id);
+      const dlCount = mangaDownloadCount(m.id, dlScope);
       const dimmed = state.offline && dlCount === 0;
       return `
-        <div class="manga-card ${dimmed ? 'offline-dim' : ''}" data-manga-id="${m.id}">
+        <div class="manga-card ${dimmed ? 'offline-dim' : ''}" data-manga-id="${esc(m.id)}">
           <div class="manga-cover-wrap">
-            <img src="${esc(coverUrlFor(m))}" data-cover-id="${m.id}" alt="" loading="lazy">
+            <img src="${esc(coverUrlFor(m, dlScope))}" data-cover-id="${esc(dlKey(m.id, dlScope))}" ${direct ? 'referrerpolicy="no-referrer"' : ''} alt="" loading="lazy">
             <div class="manga-cover-grad"></div>
             ${m.unreadCount > 0 ? `<span class="manga-badge">${m.unreadCount}</span>` : ''}
             ${dlCount > 0 ? `<span class="manga-dl-badge">↓ ${dlCount}</span>` : ''}
@@ -2041,18 +2236,20 @@
 
     attachCoverFallbacks(mainContent);
     mainContent.querySelectorAll('.manga-card').forEach((card) => {
-      card.addEventListener('click', () => navigateHash('#manga/' + card.dataset.mangaId));
+      card.addEventListener('click', () => navigateHash(`#${direct ? 'rmanga' : 'manga'}/${encodeURIComponent(card.dataset.mangaId)}`));
     });
   }
 
   // ---------------- NOVEDADES ----------------
   async function renderUpdates() {
+    const direct = isDirectMode();
     headerTitle.textContent = 'Novedades';
     headerActions.innerHTML = `
       <button id="updRefreshBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">Buscar nuevos</button>
     `;
     $('updRefreshBtn').addEventListener('click', async () => {
-      if (state.offline) { showToast('Sin conexión con el PC'); return; }
+      if (direct) { renderUpdates(); return; }
+      if (state.offline) { showToast('Sin conexión con el servidor'); return; }
       try {
         await gql(M_UPDATE_LIBRARY);
         showToast('Buscando capítulos nuevos en tu biblioteca...');
@@ -2064,6 +2261,64 @@
     headerSub.classList.add('hidden');
     mainContent.innerHTML = '<div class="spinner"></div>';
     await refreshDownloadsIndex();
+
+    if (direct && Remote) {
+      if (Remote.needsWorkerSetup()) {
+        mainContent.innerHTML = `
+          <div class="empty-state">
+            <h3>Falta configurar tu puente gratuito</h3>
+            <p>Para cargar novedades de MangaDex sin PC necesitas pegar tu URL de Cloudflare Worker gratuito en Ajustes.</p>
+            <button id="updCfgWorker" class="primary-btn" style="max-width:230px">Configurar en Ajustes</button>
+          </div>
+        `;
+        $('updCfgWorker').addEventListener('click', () => navigateHash('#settings'));
+        return;
+      }
+      try {
+        state.updates = await Remote.fetchLibraryUpdates(shouldHideNsfw(false));
+        setOfflineMode(false);
+      } catch {
+        state.updates = [];
+      }
+      const visibleDirect = state.updates.filter((ch) => ch.manga && !isMangaBlockedNsfw(ch.manga, false));
+      if (!visibleDirect.length) {
+        mainContent.innerHTML = `
+          <div class="empty-state">
+            <h3>Sin novedades directas</h3>
+            <p>Añade mangas a tu biblioteca desde <strong>Explorar</strong> para ver aquí sus últimos capítulos de MangaDex.</p>
+          </div>
+        `;
+        return;
+      }
+      mainContent.innerHTML = `<div class="list-stack">${visibleDirect.map((ch) => {
+        const dl = isDownloaded(ch.id, 'remote');
+        return `
+          <div class="list-card" data-rmanga-id="${esc(ch.manga.id)}">
+            <img class="list-thumb" src="${esc(coverUrlFor(ch.manga, 'remote'))}" data-cover-id="${esc(dlKey(ch.manga.id, 'remote'))}" referrerpolicy="no-referrer" alt="" loading="lazy">
+            <div class="list-body">
+              <div class="list-title">${esc(ch.manga.title)}</div>
+              <div class="list-sub" style="${ch.isRead ? '' : 'color:#fff;font-weight:600'}">${esc(ch.name)} ${dl ? '· ✓' : ''}</div>
+              <div class="list-sub">${formatDate(ch.uploadDate)} · ${esc(ch.scanlator || 'MangaDex')}</div>
+            </div>
+            <button class="list-cta" data-rupd-read="${esc(ch.manga.id)}|${esc(ch.id)}" type="button">Leer</button>
+          </div>
+        `;
+      }).join('')}</div>`;
+      attachCoverFallbacks(mainContent);
+      mainContent.querySelectorAll('.list-card').forEach((card) => {
+        card.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-rupd-read]');
+          if (btn) {
+            e.stopPropagation();
+            const [mId, cId] = btn.dataset.rupdRead.split('|');
+            navigateHash(`#rread/${encodeURIComponent(mId)}/${encodeURIComponent(cId)}`);
+            return;
+          }
+          navigateHash('#rmanga/' + encodeURIComponent(card.dataset.rmangaId));
+        });
+      });
+      return;
+    }
 
     try {
       const data = await gql(Q_UPDATES, {}, 8000);
@@ -2127,11 +2382,20 @@
 
   async function runClearHistory(mangaId = 0, mangaTitle = '') {
     if (clearingHistory) return;
+    if (isDirectMode() && Remote) {
+      const isSingleRem = Boolean(mangaId);
+      if (!confirm(isSingleRem ? `¿Quitar "${mangaTitle}" de recientes del modo directo?` : '¿Borrar todo el historial del modo directo?')) return;
+      if (isSingleRem) Remote.removeHistoryManga(mangaId);
+      else Remote.clearHistory();
+      showToast(isSingleRem ? 'Quitado de recientes' : 'Historial directo borrado');
+      if (state.tab === 'recent') renderRecent();
+      return;
+    }
     const isSingle = Number(mangaId) > 0;
-    if (state.offline) {
+    if (state.offline || isRemoteSuwayomiMode()) {
       const msgOff = isSingle
-        ? `Estás sin conexión con el PC. ¿Quitar "${mangaTitle}" solo de recientes locales en este móvil?`
-        : 'Estás sin conexión con el PC. ¿Limpiar solo la lista local de recientes en este móvil?';
+        ? `¿Quitar "${mangaTitle}" de la lista local de recientes en este móvil?`
+        : '¿Limpiar la lista local de recientes en este móvil? (El borrado en base de datos solo está disponible en el PC local).';
       if (confirm(msgOff)) {
         state.recent = isSingle
           ? state.recent.filter((ch) => !ch.manga || Number(ch.manga.id) !== Number(mangaId))
@@ -2190,6 +2454,7 @@
   }
 
   async function renderRecent() {
+    const direct = isDirectMode();
     headerTitle.textContent = 'Recientes';
     headerActions.innerHTML = `
       <button id="recentClearBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px;color:#ff8690;border-color:rgba(255,77,90,0.35)">Borrar todo</button>
@@ -2198,6 +2463,58 @@
     headerSub.classList.add('hidden');
     mainContent.innerHTML = '<div class="spinner"></div>';
     await refreshDownloadsIndex();
+
+    if (direct && Remote) {
+      const list = Remote.getHistory();
+      if (!list.length) {
+        mainContent.innerHTML = `
+          <div class="empty-state">
+            <h3>Sin lecturas recientes (Modo directo)</h3>
+            <p>Lo que leas desde MangaDex sin PC aparecerá aquí para retomarlo al instante.</p>
+          </div>
+        `;
+        return;
+      }
+      mainContent.innerHTML = `<div class="list-stack">${list.map((h) => {
+        const dl = isDownloaded(h.chapterId, 'remote');
+        const pageTxt = h.isRead
+          ? 'Leído'
+          : (h.pageCount > 0 ? `Pág. ${(h.lastPageRead || 0) + 1} / ${h.pageCount}` : 'En progreso');
+        const cover = coverUrlFor({ id: h.mangaId, thumbnailUrl: h.thumbnailUrl }, 'remote');
+        return `
+          <div class="list-card" data-rmanga-id="${esc(h.mangaId)}">
+            <img class="list-thumb" src="${esc(cover)}" data-cover-id="${esc(dlKey(h.mangaId, 'remote'))}" referrerpolicy="no-referrer" alt="" loading="lazy">
+            <div class="list-body">
+              <div class="list-title">${esc(h.mangaTitle)}</div>
+              <div class="list-sub">${esc(h.chapterName)} ${dl ? '· ✓ Descargado' : ''}</div>
+              <div class="list-sub">${pageTxt} · ${formatDate(h.readAt)}</div>
+            </div>
+            <button class="list-cta" data-rread-item="${esc(h.mangaId)}|${esc(h.chapterId)}" type="button">Leer</button>
+            <button class="list-del-btn" data-rdel-hist="${esc(h.mangaId)}" data-rdel-title="${esc(h.mangaTitle)}" type="button" title="Quitar">×</button>
+          </div>
+        `;
+      }).join('')}</div>`;
+      attachCoverFallbacks(mainContent);
+      mainContent.querySelectorAll('.list-card').forEach((card) => {
+        card.addEventListener('click', (e) => {
+          const del = e.target.closest('[data-rdel-hist]');
+          if (del) {
+            e.stopPropagation();
+            runClearHistory(del.dataset.rdelHist, del.dataset.rdelTitle || '');
+            return;
+          }
+          const rd = e.target.closest('[data-rread-item]');
+          if (rd) {
+            e.stopPropagation();
+            const [mId, cId] = rd.dataset.rreadItem.split('|');
+            navigateHash(`#rread/${encodeURIComponent(mId)}/${encodeURIComponent(cId)}`);
+            return;
+          }
+          navigateHash('#rmanga/' + encodeURIComponent(card.dataset.rmangaId));
+        });
+      });
+      return;
+    }
 
     try {
       const data = await gql(Q_RECENT, {}, 7000);
@@ -2336,7 +2653,160 @@
     });
   }
 
+  async function renderDirectExplore(loadNow = false) {
+    const cfg = Remote ? Remote.getConfig() : { lang: 'es' };
+    headerTitle.textContent = 'Explorar · MangaDex';
+    headerActions.innerHTML = `
+      <button id="dirLangCycleBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">Idioma: ${esc((cfg.lang || 'es').toUpperCase())}</button>
+    `;
+    $('dirLangCycleBtn').addEventListener('click', () => {
+      const order = ['es', 'es-la', 'en', 'all'];
+      const cur = cfg.lang || 'es';
+      const next = order[(order.indexOf(cur) + 1) % order.length];
+      Remote.saveConfig({ lang: next });
+      updateRemoteBanner();
+      state.remotePage = 1;
+      state.remoteMangas = [];
+      showToast('Idioma MangaDex: ' + next.toUpperCase());
+      renderDirectExplore(true);
+    });
+
+    if (!Remote || Remote.needsWorkerSetup()) {
+      headerSub.classList.add('hidden');
+      mainContent.innerHTML = `
+        <div class="empty-state">
+          <h3>Configura tu puente gratuito (2 min)</h3>
+          <p>Para leer desde <strong>MangaDex con tu PC apagado</strong>, crea un Cloudflare Worker gratuito (100.000 peticiones/día, 0€) y pega su URL en Ajustes.</p>
+          <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+            <button id="dirOpenGuideBtn" class="primary-btn" type="button" style="max-width:210px">Ver código del Worker</button>
+            <button id="dirGoSettingsBtn" class="secondary-btn" type="button">Pegar URL en Ajustes</button>
+          </div>
+        </div>
+      `;
+      $('dirOpenGuideBtn').addEventListener('click', openWorkerSetupSheet);
+      $('dirGoSettingsBtn').addEventListener('click', () => navigateHash('#settings'));
+      return;
+    }
+
+    const safeQuickTags = Extras ? Extras.filterSafeTags(POPULAR_TAGS, shouldHideNsfw(false)) : POPULAR_TAGS;
+    headerSub.classList.remove('hidden');
+    headerSub.innerHTML = `
+      <form id="dirSearchForm" class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="#8e98a8"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+        <input id="dirSearchInput" type="search" placeholder="Buscar en MangaDex sin PC..." value="${esc(state.remoteQuery)}">
+      </form>
+      <div class="chips-row">
+        <button class="chip ${state.remoteMode === 'POPULAR' && !state.remoteTag && !state.remoteQuery ? 'active' : ''}" data-dmode="POPULAR">Populares</button>
+        <button class="chip ${state.remoteMode === 'LATEST' && !state.remoteTag && !state.remoteQuery ? 'active' : ''}" data-dmode="LATEST">Últimos</button>
+        ${state.remoteTag ? `<button class="chip active" data-dtag="">🏷️ ${esc(state.remoteTag)} ×</button>` : ''}
+        ${safeQuickTags.slice(0, 14).map((t) => `<button class="chip ${state.remoteTag === t ? 'active' : ''}" data-dtag="${esc(t)}">${esc(t)}</button>`).join('')}
+      </div>
+    `;
+
+    $('dirSearchForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const q = $('dirSearchInput').value.trim();
+      state.remoteQuery = q;
+      state.remoteMode = q ? 'SEARCH' : 'POPULAR';
+      state.remotePage = 1;
+      state.remoteMangas = [];
+      loadDirectExplorePage();
+    });
+    headerSub.querySelectorAll('[data-dmode]').forEach((ch) => {
+      ch.addEventListener('click', () => {
+        state.remoteMode = ch.dataset.dmode;
+        state.remoteQuery = '';
+        state.remoteTag = '';
+        state.remotePage = 1;
+        state.remoteMangas = [];
+        renderDirectExplore(true);
+      });
+    });
+    headerSub.querySelectorAll('[data-dtag]').forEach((ch) => {
+      ch.addEventListener('click', () => {
+        const nextTag = ch.dataset.dtag === state.remoteTag ? '' : ch.dataset.dtag;
+        state.remoteTag = nextTag;
+        state.remotePage = 1;
+        state.remoteMangas = [];
+        renderDirectExplore(true);
+      });
+    });
+
+    if (loadNow || !state.remoteMangas.length) await loadDirectExplorePage();
+    else drawDirectExploreGrid();
+  }
+
+  async function loadDirectExplorePage() {
+    if (state.remotePage === 1) mainContent.innerHTML = '<div class="spinner"></div>';
+    try {
+      const res = await Remote.browseMangas({
+        mode: state.remoteMode,
+        query: state.remoteQuery,
+        tag: state.remoteTag,
+        page: state.remotePage,
+        hideNsfw: shouldHideNsfw(false)
+      });
+      const safeMangas = (res.mangas || []).filter((m) => !isMangaBlockedNsfw(m, false));
+      state.remoteHasNext = !!res.hasNextPage;
+      state.remoteMangas = state.remotePage === 1 ? safeMangas : state.remoteMangas.concat(safeMangas);
+      setOfflineMode(false);
+      drawDirectExploreGrid();
+    } catch (err) {
+      const msg = err && err.message === 'NO_WORKER_URL'
+        ? 'Configura la URL de tu Cloudflare Worker en Ajustes.'
+        : 'No se pudo conectar con el puente de MangaDex. Revisa tu conexión o la URL del Worker en Ajustes.';
+      mainContent.innerHTML = `
+        <div class="empty-state">
+          <h3>Error en Modo directo</h3>
+          <p>${esc(msg)}</p>
+          <div style="display:flex;gap:8px;justify-content:center">
+            <button id="dirErrRetry" class="primary-btn" style="max-width:150px">Reintentar</button>
+            <button id="dirErrCfg" class="secondary-btn">Ajustes</button>
+          </div>
+        </div>
+      `;
+      $('dirErrRetry').addEventListener('click', () => loadDirectExplorePage());
+      $('dirErrCfg').addEventListener('click', () => navigateHash('#settings'));
+    }
+  }
+
+  function drawDirectExploreGrid() {
+    if (!state.remoteMangas.length) {
+      mainContent.innerHTML = '<div class="empty-state"><h3>Sin resultados en MangaDex</h3><p>Prueba con otro término, etiqueta o cambia el idioma arriba a la derecha.</p></div>';
+      return;
+    }
+    mainContent.innerHTML = `
+      <div class="manga-grid">${state.remoteMangas.map((m) => `
+        <div class="manga-card" data-rmanga-id="${esc(m.id)}">
+          <div class="manga-cover-wrap">
+            <img src="${esc(m.thumbnailUrl || '')}" referrerpolicy="no-referrer" alt="" loading="lazy">
+            <div class="manga-cover-grad"></div>
+            ${m.inLibrary ? '<span class="manga-badge in-lib">En biblioteca</span>' : ''}
+            <div class="manga-card-title">${esc(m.title)}</div>
+          </div>
+        </div>
+      `).join('')}</div>
+      ${state.remoteHasNext ? '<div style="margin-top:14px"><button id="dirLoadMore" class="secondary-btn" style="width:100%">Cargar más</button></div>' : ''}
+    `;
+    mainContent.querySelectorAll('.manga-card').forEach((card) => {
+      card.addEventListener('click', () => navigateHash('#rmanga/' + encodeURIComponent(card.dataset.rmangaId)));
+    });
+    const more = $('dirLoadMore');
+    if (more) {
+      more.addEventListener('click', () => {
+        more.disabled = true;
+        more.textContent = 'Cargando...';
+        state.remotePage += 1;
+        loadDirectExplorePage();
+      });
+    }
+  }
+
   async function renderExplore() {
+    if (isDirectMode()) {
+      await renderDirectExplore(false);
+      return;
+    }
     if (state.activeSource && !state.offline) {
       renderSourceBrowser();
       return;
@@ -2591,8 +3061,76 @@
     }
 
     const minsRead = Math.round((stats.secondsRead || 0) / 60);
+    const rCfg = Remote ? Remote.getConfig() : { mode: 'local', workerUrl: '', suwayomiUrl: '', lang: 'es', dataSaver: true };
+    const isLocalhost = Remote ? Remote.isLocalhostOrigin() : false;
+
+    const remoteCardHtml = `
+      <div class="settings-card" style="border-color:rgba(56,189,248,0.35)">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px;color:#93c5fd">Modo de conexión (PC / Remoto sin PC)</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.4">
+          Cambia entre tu PC local, lectura directa desde <strong>MangaDex sin PC</strong> o un servidor Suwayomi en la nube/Raspberry Pi.
+        </div>
+        <div class="seg-control" style="margin-bottom:12px">
+          <button class="seg-btn ${rCfg.mode === 'local' ? 'active' : ''}" data-conn-mode="local" type="button">PC local</button>
+          <button class="seg-btn ${rCfg.mode === 'direct' ? 'active' : ''}" data-conn-mode="direct" type="button">Directo (sin PC)</button>
+          <button class="seg-btn ${rCfg.mode === 'remote_suwayomi' ? 'active' : ''}" data-conn-mode="remote_suwayomi" type="button">Suwayomi remoto</button>
+        </div>
+
+        ${rCfg.mode === 'direct' ? `
+          <div class="setting-group">
+            <span class="setting-label">URL de tu puente Cloudflare Worker (gratis, 100k req/día)</span>
+            <input id="remWorkerInput" class="remote-input" type="url" placeholder="https://mangadex-puente.tu-usuario.workers.dev" value="${esc(rCfg.workerUrl || '')}">
+            <div style="font-size:11.5px;color:var(--muted);margin-top:5px">
+              ${isLocalhost
+                ? 'Estás en localhost: funciona directo sin Worker. Para usar desde el móvil/Tailscale pega tu Worker.'
+                : 'Obligatorio desde móvil/Tailscale porque el navegador bloquea CORS directo hacia api.mangadex.org.'}
+            </div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button id="remWorkerSaveBtn" class="primary-btn" type="button" style="flex:1;padding:9px 10px;font-size:13px">Guardar y probar</button>
+              <button id="remWorkerCodeBtn" class="secondary-btn" type="button" style="padding:9px 10px;font-size:12.5px">Ver código Worker</button>
+            </div>
+            <div id="remWorkerStatus" class="remote-status"></div>
+          </div>
+          <div class="setting-group">
+            <span class="setting-label">Idioma preferido en MangaDex</span>
+            <div class="seg-control" style="grid-template-columns:repeat(4,1fr)">
+              ${[['es', 'ES'], ['es-la', 'ES-LA'], ['en', 'EN'], ['all', 'ES+EN']].map(([k, lbl]) =>
+                `<button class="seg-btn ${rCfg.lang === k ? 'active' : ''}" data-rem-lang="${k}" type="button">${lbl}</button>`
+              ).join('')}
+            </div>
+          </div>
+          <div class="setting-group" style="margin-bottom:0">
+            <span class="setting-label">Calidad de páginas en modo directo</span>
+            <div class="seg-control two">
+              <button class="seg-btn ${rCfg.dataSaver !== false ? 'active' : ''}" data-rem-saver="1" type="button">Ahorro datos (4G/5G)</button>
+              <button class="seg-btn ${rCfg.dataSaver === false ? 'active' : ''}" data-rem-saver="0" type="button">Calidad original</button>
+            </div>
+          </div>
+        ` : ''}
+
+        ${rCfg.mode === 'remote_suwayomi' ? `
+          <div class="setting-group" style="margin-bottom:0">
+            <span class="setting-label">URL del servidor Suwayomi remoto (VPS / Raspberry Pi / 24/7)</span>
+            <input id="remSuwInput" class="remote-input" type="url" placeholder="https://tu-vps.ts.net" value="${esc(rCfg.suwayomiUrl || '')}">
+            <div style="font-size:11.5px;color:var(--muted);margin-top:5px">
+              Permite usar todas tus extensiones de scans con tu PC apagado conectándote a otro Suwayomi siempre encendido.
+            </div>
+            <button id="remSuwSaveBtn" class="primary-btn" type="button" style="margin-top:8px;padding:9px 10px;font-size:13px">Guardar y probar conexión</button>
+            <div id="remSuwStatus" class="remote-status"></div>
+          </div>
+        ` : ''}
+
+        ${rCfg.mode === 'local' ? `
+          <div style="font-size:12px;color:var(--muted)">
+            Conectando a tu PC local (${state.offline ? '<strong style="color:#f6d57a">PC apagado · modo offline</strong>' : '<strong style="color:var(--green)">en línea</strong>'}). Si apagas el PC, activa <strong>Directo (sin PC)</strong> arriba.
+          </div>
+        ` : ''}
+      </div>
+    `;
 
     mainContent.innerHTML = `
+      ${remoteCardHtml}
+
       <div class="settings-card">
         <div style="font-size:14px;font-weight:700;margin-bottom:4px">Estadísticas en este móvil</div>
         <div class="stats-grid">
@@ -2697,11 +3235,11 @@
         <div style="font-size:14px;font-weight:700;margin-bottom:6px">Páginas marcadas (${bookmarks.length})</div>
         ${bookmarks.slice(0, 15).map((bm) => `
           <div class="dl-storage-row">
-            <div style="min-width:0;flex:1;cursor:pointer" data-open-bm="${bm.mangaId}:${bm.chapterId}:${bm.pageIdx}">
+            <div style="min-width:0;flex:1;cursor:pointer" data-open-bm="${esc(bm.mangaId)}|${esc(bm.chapterId)}|${bm.pageIdx}|${bm.isRemote ? '1' : '0'}">
               <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(bm.mangaTitle)}</div>
               <div style="font-size:11.5px;color:var(--muted)">${esc(bm.chapterName)} · Pág. ${bm.pageIdx + 1}</div>
             </div>
-            <button class="list-del-btn" data-del-bm="${bm.chapterId}:${bm.pageIdx}" type="button">×</button>
+            <button class="list-del-btn" data-del-bm="${esc(bm.chapterId)}|${bm.pageIdx}" type="button">×</button>
           </div>
         `).join('')}
       </div>` : ''}
@@ -2734,6 +3272,82 @@
         </button>
       </div>
     `;
+
+    // Bindings de modo remoto / conexión
+    mainContent.querySelectorAll('[data-conn-mode]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const nextMode = b.dataset.connMode;
+        if (nextMode === getConnMode()) return;
+        switchConnectionMode(nextMode);
+        const lbl = nextMode === 'direct' ? 'Modo directo (MangaDex · Sin PC)' : (nextMode === 'remote_suwayomi' ? 'Suwayomi remoto' : 'PC local');
+        showToast('Modo cambiado a: ' + lbl);
+        renderSettings();
+      });
+    });
+
+    const wkSaveBtn = $('remWorkerSaveBtn');
+    if (wkSaveBtn && Remote) {
+      wkSaveBtn.addEventListener('click', async () => {
+        const val = ($('remWorkerInput').value || '').trim();
+        Remote.saveConfig({ workerUrl: val });
+        updateRemoteBanner();
+        const st = $('remWorkerStatus');
+        st.className = 'remote-status';
+        st.textContent = 'Probando conexión con el puente MangaDex...';
+        const res = await Remote.testDirectBridge(val);
+        if (res.ok) {
+          st.className = 'remote-status ok';
+          st.textContent = '✓ ' + res.message + '. Ya puedes usar Explorar sin PC.';
+          state.remoteMangas = [];
+          showToast('Puente MangaDex listo');
+        } else {
+          st.className = 'remote-status err';
+          st.textContent = '✗ ' + (res.error || 'Error conectando');
+        }
+      });
+    }
+    const wkCodeBtn = $('remWorkerCodeBtn');
+    if (wkCodeBtn) wkCodeBtn.addEventListener('click', openWorkerSetupSheet);
+
+    mainContent.querySelectorAll('[data-rem-lang]').forEach((b) => {
+      b.addEventListener('click', () => {
+        if (!Remote) return;
+        Remote.saveConfig({ lang: b.dataset.remLang });
+        state.remoteMangas = [];
+        updateRemoteBanner();
+        renderSettings();
+      });
+    });
+    mainContent.querySelectorAll('[data-rem-saver]').forEach((b) => {
+      b.addEventListener('click', () => {
+        if (!Remote) return;
+        Remote.saveConfig({ dataSaver: b.dataset.remSaver === '1' });
+        renderSettings();
+      });
+    });
+
+    const suwSaveBtn = $('remSuwSaveBtn');
+    if (suwSaveBtn && Remote) {
+      suwSaveBtn.addEventListener('click', async () => {
+        const val = ($('remSuwInput').value || '').trim();
+        Remote.saveConfig({ suwayomiUrl: val });
+        updateRemoteBanner();
+        const st = $('remSuwStatus');
+        st.className = 'remote-status';
+        st.textContent = 'Probando servidor Suwayomi remoto...';
+        const res = await Remote.testRemoteSuwayomi(val);
+        if (res.ok) {
+          st.className = 'remote-status ok';
+          st.textContent = '✓ ' + res.message;
+          state.library = [];
+          state.sources = [];
+          showToast('Servidor remoto conectado');
+        } else {
+          st.className = 'remote-status err';
+          st.textContent = '✗ ' + (res.error || 'Error conectando');
+        }
+      });
+    }
 
     // Bindings de ajustes
     mainContent.querySelectorAll('[data-pref-autodl]').forEach((b) => {
@@ -2782,7 +3396,9 @@
     mainContent.querySelectorAll('[data-del-manga-dl]').forEach((b) => {
       b.addEventListener('click', async () => {
         if (!confirm('¿Borrar las descargas de este manga en tu móvil?')) return;
-        await Offline.deleteMangaDownloads(Number(b.dataset.delMangaDl));
+        const rawId = b.dataset.delMangaDl;
+        const key = (rawId.startsWith('r_') || rawId.startsWith('v_')) ? rawId : Number(rawId);
+        await Offline.deleteMangaDownloads(key);
         await refreshDownloadsIndex();
         showToast('Descargas borradas');
         renderSettings();
@@ -2803,14 +3419,16 @@
 
     mainContent.querySelectorAll('[data-open-bm]').forEach((el) => {
       el.addEventListener('click', () => {
-        const [mId, cId, pIdx] = el.dataset.openBm.split(':').map(Number);
-        navigateHash(`#read/${mId}/${cId}/${pIdx}`);
+        const [mId, cId, pIdx, isRem] = el.dataset.openBm.split('|');
+        if (isRem === '1') navigateHash(`#rread/${encodeURIComponent(mId)}/${encodeURIComponent(cId)}/${Number(pIdx)}`);
+        else navigateHash(`#read/${Number(mId)}/${Number(cId)}/${Number(pIdx)}`);
       });
     });
     mainContent.querySelectorAll('[data-del-bm]').forEach((el) => {
       el.addEventListener('click', () => {
-        const [cId, pIdx] = el.dataset.delBm.split(':').map(Number);
-        Extras.removePageBookmark(cId, pIdx);
+        const [cId, pIdx] = el.dataset.delBm.split('|');
+        const parsedC = /^\d+$/.test(cId) ? Number(cId) : cId;
+        Extras.removePageBookmark(parsedC, Number(pIdx));
         renderSettings();
       });
     });
@@ -2987,11 +3605,51 @@
     }
   }
 
-  async function openMangaDetail(mangaId, forceFetch = false, inVault = false) {
-    state.mangaInVault = !!inVault;
+  async function openMangaDetail(mangaId, forceFetch = false, scope = false) {
+    const inVault = (scope === true || scope === 'vault');
+    const isRemote = (scope === 'remote');
+    const dlScope = isRemote ? 'remote' : inVault;
+    state.mangaInVault = inVault;
+    state.mangaIsRemote = isRemote;
     mangaView.classList.remove('hidden');
     mangaView.innerHTML = '<div style="padding-top:80px"><div class="spinner"></div></div>';
     await refreshDownloadsIndex();
+
+    if (isRemote && Remote) {
+      try {
+        const res = await Remote.fetchMangaDetail(mangaId, shouldHideNsfw(false));
+        state.manga = res.manga;
+        state.mangaChapters = res.chapters || [];
+        setOfflineMode(false);
+        if (Offline) {
+          const cacheManga = Object.assign({}, state.manga, { id: dlKey(state.manga.id, 'remote') });
+          Offline.saveMangaDetail(cacheManga, state.mangaChapters);
+          if (state.manga.thumbnailUrl) Offline.cacheCover(dlKey(state.manga.id, 'remote'), state.manga.thumbnailUrl);
+        }
+        drawMangaDetail();
+      } catch (err) {
+        const cached = Offline ? await Offline.getMangaDetail(dlKey(mangaId, 'remote')) : null;
+        if (cached && cached.manga) {
+          setOfflineMode(true);
+          state.manga = Object.assign({}, cached.manga, { id: mangaId, isRemoteDirect: true });
+          state.mangaChapters = (cached.chapters || []).map((c) => {
+            const pr = Remote.getChapterProgress(c.id);
+            return pr ? Object.assign({}, c, { lastPageRead: pr.lastPageRead, isRead: pr.isRead }) : c;
+          });
+          drawMangaDetail();
+        } else {
+          mangaView.innerHTML = `
+            <div class="empty-state" style="padding-top:80px">
+              <h3>No se pudo cargar el manga</h3>
+              <p>${esc((err && err.message === 'NO_WORKER_URL') ? 'Configura tu puente Cloudflare Worker en Ajustes.' : (err && err.message) || 'Sin conexión con MangaDex.')}</p>
+              <button id="mangaErrBack" class="secondary-btn">Volver</button>
+            </div>
+          `;
+          $('mangaErrBack').addEventListener('click', () => history.back());
+        }
+      }
+      return;
+    }
 
     try {
       let data = await gql(Q_MANGA_DETAIL, { id: mangaId }, 8000, inVault);
@@ -3018,15 +3676,15 @@
       state.manga = manga;
       state.mangaChapters = chapters;
       if (Offline) {
-        const cacheManga = Object.assign({}, manga, { id: dlKey(manga.id, inVault) });
+        const cacheManga = Object.assign({}, manga, { id: dlKey(manga.id, dlScope) });
         Offline.saveMangaDetail(cacheManga, chapters);
-        Offline.cacheCover(dlKey(manga.id, inVault), assetUrl(manga.thumbnailUrl, inVault));
+        Offline.cacheCover(dlKey(manga.id, dlScope), assetUrl(manga.thumbnailUrl, inVault));
       }
       drawMangaDetail();
     } catch {
       if (inVault) state.vaultOffline = true;
       else setOfflineMode(true);
-      const cached = Offline ? await Offline.getMangaDetail(dlKey(mangaId, inVault)) : null;
+      const cached = Offline ? await Offline.getMangaDetail(dlKey(mangaId, dlScope)) : null;
       if (cached && cached.manga) {
         state.manga = Object.assign({}, cached.manga, { id: mangaId });
         state.mangaChapters = (cached.chapters || []).map((c) => {
@@ -3040,8 +3698,8 @@
       } else {
         mangaView.innerHTML = `
           <div class="empty-state" style="padding-top:80px">
-            <h3>Sin conexión con el PC</h3>
-            <p>Este manga no está guardado en tu móvil. Conéctate al PC para abrirlo o descargar capítulos.</p>
+            <h3>Sin conexión con el servidor</h3>
+            <p>Este manga no está guardado en tu móvil. Conéctate para abrirlo o descargar capítulos.</p>
             <button id="mangaErrBack" class="secondary-btn">Volver</button>
           </div>
         `;
@@ -3050,10 +3708,11 @@
     }
   }
 
-  function pickResumeChapter(chapters, inVault = false) {
+  function pickResumeChapter(chapters, scope = false) {
     if (!chapters.length) return null;
-    const isOff = inVault ? state.vaultOffline : state.offline;
-    const pool = isOff ? chapters.filter((c) => isDownloaded(c.id, inVault)) : chapters;
+    const isVault = (scope === true || scope === 'vault');
+    const isOff = isVault ? state.vaultOffline : state.offline;
+    const pool = isOff ? chapters.filter((c) => isDownloaded(c.id, scope)) : chapters;
     if (!pool.length) return null;
 
     const asc = pool.slice().sort((a, b) => a.sourceOrder - b.sourceOrder);
@@ -3069,35 +3728,38 @@
     return { chap: last, label: `Releer: ${last.name}` };
   }
 
-  function chapterDlButtonHtml(c, inVault = false) {
-    const cKey = dlKey(c.id, inVault);
-    if (isDownloaded(c.id, inVault)) {
-      return `<button class="chap-dl-btn done" data-dl-id="${c.id}" type="button" title="Descargado">✓</button>`;
+  function chapterDlButtonHtml(c, scope = false) {
+    const isVault = (scope === true || scope === 'vault');
+    const cKey = dlKey(c.id, scope);
+    if (isDownloaded(c.id, scope)) {
+      return `<button class="chap-dl-btn done" data-dl-id="${esc(c.id)}" type="button" title="Descargado">✓</button>`;
     }
     if (state.activeDownload && state.activeDownload.chapterKey === cKey) {
       const txt = state.activeDownload.total > 0 ? `${state.activeDownload.done}/${state.activeDownload.total}` : '...';
-      return `<button class="chap-dl-btn busy" data-dl-id="${c.id}" type="button" disabled>${txt}</button>`;
+      return `<button class="chap-dl-btn busy" data-dl-id="${esc(c.id)}" type="button" disabled>${txt}</button>`;
     }
     if (state.downloadQueue.some((q) => q.chapterKey === cKey)) {
-      return `<button class="chap-dl-btn busy" data-dl-id="${c.id}" type="button" disabled>Cola</button>`;
+      return `<button class="chap-dl-btn busy" data-dl-id="${esc(c.id)}" type="button" disabled>Cola</button>`;
     }
-    if (inVault ? state.vaultOffline : state.offline) {
-      return `<button class="chap-dl-btn" data-dl-id="${c.id}" type="button" disabled>—</button>`;
+    if (isVault ? state.vaultOffline : state.offline) {
+      return `<button class="chap-dl-btn" data-dl-id="${esc(c.id)}" type="button" disabled>—</button>`;
     }
-    return `<button class="chap-dl-btn" data-dl-id="${c.id}" type="button" title="Descargar">↓</button>`;
+    return `<button class="chap-dl-btn" data-dl-id="${esc(c.id)}" type="button" title="Descargar">↓</button>`;
   }
 
   function drawMangaDetail() {
     const m = state.manga;
     const inVault = !!state.mangaInVault;
+    const isRemote = !!state.mangaIsRemote;
+    const scope = isRemote ? 'remote' : inVault;
     const isOff = inVault ? state.vaultOffline : state.offline;
-    const readHashPrefix = inVault ? 'vread' : 'read';
-    const resume = pickResumeChapter(state.mangaChapters, inVault);
-    const dlCount = state.mangaChapters.filter((c) => isDownloaded(c.id, inVault)).length;
+    const readHashPrefix = inVault ? 'vread' : (isRemote ? 'rread' : 'read');
+    const resume = pickResumeChapter(state.mangaChapters, scope);
+    const dlCount = state.mangaChapters.filter((c) => isDownloaded(c.id, scope)).length;
     const filtered = state.mangaChapters
       .filter((c) => {
         if (state.chapterFilter === 'unread') return !c.isRead;
-        if (state.chapterFilter === 'downloaded') return isDownloaded(c.id, inVault);
+        if (state.chapterFilter === 'downloaded') return isDownloaded(c.id, scope);
         if (state.chapterFilter === 'bookmarked') return !!c.isBookmarked;
         return true;
       })
@@ -3108,7 +3770,7 @@
     if (m.author) metaParts.push(m.author);
     if (m.source && m.source.name) metaParts.push(m.source.name);
     if (m.status) metaParts.push(m.status);
-    const cover = coverUrlFor(m, inVault);
+    const cover = coverUrlFor(m, scope);
 
     mangaView.innerHTML = `
       <div class="manga-hero">
@@ -3121,19 +3783,20 @@
             </button>
             <div style="display:flex;gap:6px">
               ${!isOff ? '<button id="detailBatchDlBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">↓ Sig. 5</button>' : ''}
-              ${!isOff && !inVault ? '<button id="detailMigBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">Migrar</button>' : ''}
+              ${!isOff && !inVault && !isRemote ? '<button id="detailMigBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">Migrar</button>' : ''}
               ${!isOff ? `<button id="detailRefreshBtn" class="icon-btn" type="button" aria-label="Actualizar capítulos">
                 <svg viewBox="0 0 24 24"><path d="M17.6 6.4A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4l-2.4 2.4z"/></svg>
               </button>` : ''}
             </div>
           </div>
           <div class="manga-hero-main">
-            <img class="manga-hero-cover" src="${esc(cover)}" data-cover-id="${dlKey(m.id, inVault)}" alt="">
+            <img class="manga-hero-cover" src="${esc(cover)}" data-cover-id="${esc(dlKey(m.id, scope))}" ${isRemote ? 'referrerpolicy="no-referrer"' : ''} alt="">
             <div class="manga-hero-meta">
               <h2 class="manga-hero-title">${esc(m.title)}</h2>
               <div class="manga-hero-sub">${esc(metaParts.join(' · '))}</div>
               ${dlCount > 0 ? `<div style="margin-top:5px;font-size:11.5px;color:var(--green);font-weight:600">↓ ${dlCount} descargado(s)</div>` : ''}
               ${inVault ? '<div style="margin-top:5px"><span class="vault-pill">🔒 Bóveda aislada (sin rastro en localhost:4567)</span></div>' : ''}
+              ${isRemote ? '<div style="margin-top:5px"><span class="vault-pill" style="background:rgba(56,189,248,0.2);border-color:rgba(56,189,248,0.5);color:#bae6fd">🌐 Modo directo · Sin PC</span></div>' : ''}
             </div>
           </div>
         </div>
@@ -3143,12 +3806,12 @@
         ${resume
           ? `<button id="detailResumeBtn" class="primary-btn" style="flex:1">${esc(resume.label)}</button>`
           : (isOff ? '<button class="secondary-btn" style="flex:1;opacity:0.6" disabled>Sin capítulos descargados</button>' : '')}
-        ${!isOff
+        ${(!isOff || isRemote)
           ? (inVault
             ? `<button id="detailLibBtn" class="secondary-btn" type="button" style="border-color:#a78bfa;color:#e9d5ff">${m.inLibrary ? '🔒 En bóveda' : '+ Bóveda'}</button>`
             : `<button id="detailLibBtn" class="secondary-btn" type="button" style="${m.inLibrary ? 'border-color:var(--green);color:var(--green)' : ''}">${m.inLibrary ? '✓ Biblio' : '+ Biblio'}</button>`)
           : ''}
-        ${!isOff && !inVault && m.inLibrary ? '<button id="detailCatBtn" class="secondary-btn" type="button">Cat.</button>' : ''}
+        ${!isOff && !inVault && !isRemote && m.inLibrary ? '<button id="detailCatBtn" class="secondary-btn" type="button">Cat.</button>' : ''}
       </div>
 
       ${m.description ? `<div id="detailDesc" class="manga-desc clamped">${esc(m.description)}</div>` : ''}
@@ -3174,24 +3837,24 @@
 
       <div id="chaptersList">
         ${filtered.length ? filtered.map((c) => {
-          const dl = isDownloaded(c.id, inVault);
+          const dl = isDownloaded(c.id, scope);
           const locked = isOff && !dl;
           return `
-            <div class="chapter-row ${c.isRead ? 'read' : ''} ${locked ? 'offline-locked' : ''}" data-chap-id="${c.id}">
+            <div class="chapter-row ${c.isRead ? 'read' : ''} ${locked ? 'offline-locked' : ''}" data-chap-id="${esc(c.id)}">
               <span class="chapter-dot"></span>
               <div class="chapter-info">
                 <div class="chapter-name">${esc(c.name)}</div>
                 <div class="chapter-meta">
                   ${[
-                    dl ? 'Descargado' : (locked ? 'Solo con PC' : ''),
+                    dl ? 'Descargado' : (locked ? 'Sin conexión' : ''),
                     formatDate(c.uploadDate),
                     c.scanlator,
                     (!c.isRead && c.lastPageRead > 0 ? `Pág. ${c.lastPageRead + 1}` : '')
                   ].filter(Boolean).join(' · ')}
                 </div>
               </div>
-              ${!isOff ? `<button class="chap-star-btn ${c.isBookmarked ? 'active' : ''}" data-star-id="${c.id}" type="button" title="Marcar capítulo">${c.isBookmarked ? '★' : '☆'}</button>` : ''}
-              ${chapterDlButtonHtml(c, inVault)}
+              ${(!isOff || isRemote) ? `<button class="chap-star-btn ${c.isBookmarked ? 'active' : ''}" data-star-id="${esc(c.id)}" type="button" title="Marcar capítulo">${c.isBookmarked ? '★' : '☆'}</button>` : ''}
+              ${chapterDlButtonHtml(c, scope)}
             </div>
           `;
         }).join('') : '<div class="empty-state"><p>No hay capítulos con este filtro.</p></div>'}
@@ -3205,7 +3868,7 @@
       else navigateHash('#' + state.tab);
     });
     const refBtn = $('detailRefreshBtn');
-    if (refBtn) refBtn.addEventListener('click', () => { showToast('Actualizando capítulos...'); openMangaDetail(m.id, true, inVault); });
+    if (refBtn) refBtn.addEventListener('click', () => { showToast('Actualizando capítulos...'); openMangaDetail(m.id, true, scope); });
     const migBtn = $('detailMigBtn');
     if (migBtn) migBtn.addEventListener('click', () => openMigrateSheet(m));
     const catBtn = $('detailCatBtn');
@@ -3215,10 +3878,10 @@
     if (batchBtn) {
       batchBtn.addEventListener('click', () => {
         const asc = state.mangaChapters.slice().sort((a, b) => a.sourceOrder - b.sourceOrder);
-        const candidates = asc.filter((c) => !c.isRead && !isDownloaded(c.id, inVault)).slice(0, 5);
-        const toQueue = candidates.length ? candidates : asc.filter((c) => !isDownloaded(c.id, inVault)).slice(0, 5);
+        const candidates = asc.filter((c) => !c.isRead && !isDownloaded(c.id, scope)).slice(0, 5);
+        const toQueue = candidates.length ? candidates : asc.filter((c) => !isDownloaded(c.id, scope)).slice(0, 5);
         if (!toQueue.length) { showToast('Todos los capítulos ya están descargados'); return; }
-        toQueue.forEach((c) => enqueueChapterDownload(m, state.mangaChapters, c, true, inVault));
+        toQueue.forEach((c) => enqueueChapterDownload(m, state.mangaChapters, c, true, scope));
         showToast(`Añadidos ${toQueue.length} capítulo(s) a descargas`);
       });
     }
@@ -3226,16 +3889,26 @@
     const desc = $('detailDesc');
     if (desc) desc.addEventListener('click', () => desc.classList.toggle('clamped'));
     mangaView.querySelectorAll('[data-open-tag]').forEach((tb) => {
-      tb.addEventListener('click', () => openTagExplorer(tb.dataset.openTag, inVault));
+      tb.addEventListener('click', () => openTagExplorer(tb.dataset.openTag, scope));
     });
     const resumeBtn = $('detailResumeBtn');
-    if (resumeBtn && resume) resumeBtn.addEventListener('click', () => navigateHash(`#${readHashPrefix}/${m.id}/${resume.chap.id}`));
+    if (resumeBtn && resume) {
+      resumeBtn.addEventListener('click', () => navigateHash(`#${readHashPrefix}/${encodeURIComponent(m.id)}/${encodeURIComponent(resume.chap.id)}`));
+    }
 
     const libBtn = $('detailLibBtn');
     if (libBtn) {
       libBtn.addEventListener('click', async () => {
         try {
           const nextVal = !m.inLibrary;
+          if (isRemote && Remote) {
+            Remote.toggleLibraryManga(m, nextVal);
+            m.inLibrary = nextVal;
+            state.library = Remote.getLibraryList();
+            showToast(nextVal ? 'Añadido a tu biblioteca directa' : 'Quitado de tu biblioteca directa');
+            drawMangaDetail();
+            return;
+          }
           await gql(M_UPDATE_MANGA, { id: m.id, inLibrary: nextVal }, 10000, inVault);
           m.inLibrary = nextVal;
           if (inVault) {
@@ -3259,10 +3932,17 @@
     mangaView.querySelectorAll('.chap-star-btn').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const cId = Number(btn.dataset.starId);
-        const chap = state.mangaChapters.find((x) => x.id === cId);
+        const rawId = btn.dataset.starId;
+        const cId = isRemote ? rawId : Number(rawId);
+        const chap = state.mangaChapters.find((x) => String(x.id) === String(cId));
         if (!chap) return;
         const nextVal = !chap.isBookmarked;
+        if (isRemote && Remote) {
+          Remote.toggleChapterBookmark(cId, nextVal);
+          chap.isBookmarked = nextVal;
+          drawMangaDetail();
+          return;
+        }
         try {
           await gql(M_UPDATE_CHAPTER, { id: cId, patch: { isBookmarked: nextVal } }, 8000, inVault);
           chap.isBookmarked = nextVal;
@@ -3274,30 +3954,32 @@
     mangaView.querySelectorAll('.chap-dl-btn').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const cId = Number(btn.dataset.dlId);
-        const chap = state.mangaChapters.find((x) => x.id === cId);
+        const rawId = btn.dataset.dlId;
+        const cId = isRemote ? rawId : Number(rawId);
+        const chap = state.mangaChapters.find((x) => String(x.id) === String(cId));
         if (!chap) return;
-        if (isDownloaded(cId, inVault)) {
+        if (isDownloaded(cId, scope)) {
           if (confirm(`¿Borrar la descarga local de "${chap.name}"?`)) {
-            await Offline.deleteDownload(dlKey(cId, inVault));
+            await Offline.deleteDownload(dlKey(cId, scope));
             await refreshDownloadsIndex();
             showToast('Descarga borrada');
             drawMangaDetail();
           }
           return;
         }
-        enqueueChapterDownload(m, state.mangaChapters, chap, false, inVault);
+        enqueueChapterDownload(m, state.mangaChapters, chap, false, scope);
       });
     });
 
     mangaView.querySelectorAll('.chapter-row').forEach((row) => {
       row.addEventListener('click', () => {
-        const cId = Number(row.dataset.chapId);
-        if (isOff && !isDownloaded(cId, inVault)) {
-          showToast('No descargado. Conéctate al PC para leer o descargar este capítulo.');
+        const rawId = row.dataset.chapId;
+        const cId = isRemote ? rawId : Number(rawId);
+        if (isOff && !isDownloaded(cId, scope)) {
+          showToast('No descargado. Conéctate para leer o descargar este capítulo.');
           return;
         }
-        navigateHash(`#${readHashPrefix}/${m.id}/${cId}`);
+        navigateHash(`#${readHashPrefix}/${encodeURIComponent(m.id)}/${encodeURIComponent(cId)}`);
       });
     });
   }
@@ -3321,12 +4003,16 @@
     if (r.readTickTimer) { clearInterval(r.readTickTimer); r.readTickTimer = null; }
   }
 
-  async function openReader(mangaId, chapterId, forcedPage = null, inVault = false) {
+  async function openReader(mangaId, chapterId, forcedPage = null, scope = false) {
+    const inVault = (scope === true || scope === 'vault');
+    const isRemote = (scope === 'remote');
+    const dlScope = isRemote ? 'remote' : inVault;
     const r = state.reader;
     clearReaderTimers();
     revokeReaderBlobs();
     r.open = true;
-    r.inVault = !!inVault;
+    r.inVault = inVault;
+    r.isRemote = isRemote;
     r.zoomed = false;
     r.lastSavedPage = -1;
     r.markedRead = false;
@@ -3347,20 +4033,31 @@
     readerStage.innerHTML = '<div style="padding-top:40vh"><div class="spinner"></div></div>';
 
     try {
-      if (!state.manga || state.manga.id !== mangaId || state.mangaInVault !== inVault || !state.mangaChapters.length) {
+      if (!state.manga || String(state.manga.id) !== String(mangaId) || state.mangaInVault !== inVault || state.mangaIsRemote !== isRemote || !state.mangaChapters.length) {
         try {
-          const d = await gql(Q_MANGA_DETAIL, { id: mangaId }, 7000, inVault);
-          state.manga = d.manga;
-          state.mangaInVault = inVault;
-          state.mangaChapters = (d.chapters && d.chapters.nodes) || [];
-          if (Offline) Offline.saveMangaDetail(Object.assign({}, state.manga, { id: dlKey(state.manga.id, inVault) }), state.mangaChapters);
+          if (isRemote && Remote) {
+            const res = await Remote.fetchMangaDetail(mangaId, shouldHideNsfw(false));
+            state.manga = res.manga;
+            state.mangaInVault = false;
+            state.mangaIsRemote = true;
+            state.mangaChapters = res.chapters || [];
+            if (Offline) Offline.saveMangaDetail(Object.assign({}, state.manga, { id: dlKey(state.manga.id, 'remote') }), state.mangaChapters);
+          } else {
+            const d = await gql(Q_MANGA_DETAIL, { id: mangaId }, 7000, inVault);
+            state.manga = d.manga;
+            state.mangaInVault = inVault;
+            state.mangaIsRemote = false;
+            state.mangaChapters = (d.chapters && d.chapters.nodes) || [];
+            if (Offline) Offline.saveMangaDetail(Object.assign({}, state.manga, { id: dlKey(state.manga.id, inVault) }), state.mangaChapters);
+          }
         } catch {
           if (inVault) state.vaultOffline = true;
           else setOfflineMode(true);
-          const cached = Offline ? await Offline.getMangaDetail(dlKey(mangaId, inVault)) : null;
+          const cached = Offline ? await Offline.getMangaDetail(dlKey(mangaId, dlScope)) : null;
           if (cached) {
             state.manga = Object.assign({}, cached.manga, { id: mangaId });
             state.mangaInVault = inVault;
+            state.mangaIsRemote = isRemote;
             state.mangaChapters = cached.chapters || [];
           }
         }
@@ -3368,7 +4065,7 @@
 
       r.manga = state.manga;
       r.chapters = state.mangaChapters.slice().sort((a, b) => a.sourceOrder - b.sourceOrder);
-      r.chapIdx = Math.max(0, r.chapters.findIndex((c) => c.id === chapterId));
+      r.chapIdx = Math.max(0, r.chapters.findIndex((c) => String(c.id) === String(chapterId)));
       const chap = r.chapters[r.chapIdx];
 
       applyReaderVisualPrefs();
@@ -3378,15 +4075,19 @@
       readerNextChap.disabled = r.chapIdx >= r.chapters.length - 1;
 
       const isOff = inVault ? state.vaultOffline : state.offline;
-      let pages = Offline ? await Offline.loadDownloadedPageBlobUrls(dlKey(chapterId, inVault)) : null;
+      let pages = Offline ? await Offline.loadDownloadedPageBlobUrls(dlKey(chapterId, dlScope)) : null;
       if (pages && pages.length) {
         r.blobUrls = pages;
       } else {
         if (isOff) throw new Error('OFFLINE_NOT_DOWNLOADED');
         try {
-          const pgData = await gql(M_FETCH_PAGES, { chapterId }, 25000, inVault);
-          const rawPages = (pgData.fetchChapterPages && pgData.fetchChapterPages.pages) || [];
-          pages = rawPages.map((u) => assetUrl(u, inVault));
+          if (isRemote && Remote) {
+            pages = await Remote.fetchChapterPages(chapterId);
+          } else {
+            const pgData = await gql(M_FETCH_PAGES, { chapterId }, 25000, inVault);
+            const rawPages = (pgData.fetchChapterPages && pgData.fetchChapterPages.pages) || [];
+            pages = rawPages.map((u) => assetUrl(u, inVault));
+          }
         } catch {
           if (inVault) state.vaultOffline = true;
           else setOfflineMode(true);
@@ -3397,15 +4098,15 @@
       r.pages = pages || [];
       if (!r.pages.length) {
         readerStage.innerHTML = `<div class="empty-state" style="padding-top:34vh"><h3>No se pudieron cargar las páginas</h3><button id="retryPagesBtn" class="primary-btn" style="max-width:220px">Reintentar</button></div>`;
-        $('retryPagesBtn').addEventListener('click', () => openReader(mangaId, chapterId, forcedPage, inVault));
+        $('retryPagesBtn').addEventListener('click', () => openReader(mangaId, chapterId, forcedPage, dlScope));
         return;
       }
 
       if (!isOff && state.prefs.autoDlNext > 0 && r.manga) {
         for (let k = 1; k <= state.prefs.autoDlNext; k++) {
           const nextC = r.chapters[r.chapIdx + k];
-          if (nextC && !nextC.isRead && !isDownloaded(nextC.id, inVault)) {
-            enqueueChapterDownload(r.manga, r.chapters, nextC, true, inVault);
+          if (nextC && !nextC.isRead && !isDownloaded(nextC.id, dlScope)) {
+            enqueueChapterDownload(r.manga, r.chapters, nextC, true, dlScope);
           }
         }
       }
@@ -3433,6 +4134,17 @@
           pageCount: r.pages.length,
           isRead: r.markedRead
         });
+      } else if (isRemote && r.manga && chap && Remote) {
+        Remote.recordHistory({
+          mangaId: r.manga.id,
+          mangaTitle: r.manga.title,
+          thumbnailUrl: r.manga.thumbnailUrl || '',
+          chapterId: chap.id,
+          chapterName: chap.name,
+          lastPageRead: r.pageIdx,
+          pageCount: r.pages.length,
+          isRead: r.markedRead
+        });
       }
       setTimeout(() => { if (r.open) setReaderChrome(false); }, 1400);
     } catch (err) {
@@ -3440,7 +4152,7 @@
       readerStage.innerHTML = `
         <div class="empty-state" style="padding-top:34vh">
           <h3>${notDl ? 'Capítulo no descargado' : 'Error al cargar el capítulo'}</h3>
-          <p>${notDl ? 'El servidor está apagado o sin conexión. Solo puedes leer capítulos descargados.' : esc(err.message || '')}</p>
+          <p>${notDl ? 'Sin conexión o servidor apagado. Solo puedes leer capítulos descargados.' : esc(err.message || '')}</p>
           <button id="readerErrBack" class="primary-btn" style="max-width:220px">Volver</button>
         </div>
       `;
@@ -3503,9 +4215,10 @@
     }
 
     const isOff = r.inVault ? state.vaultOffline : state.offline;
-    if (!isOff && r.pageIdx >= Math.floor(r.pages.length * 0.8) && r.chapIdx < r.chapters.length - 1) {
+    const dlScope = r.isRemote ? 'remote' : r.inVault;
+    if (!isOff && !r.isRemote && r.pageIdx >= Math.floor(r.pages.length * 0.8) && r.chapIdx < r.chapters.length - 1) {
       const nextChap = r.chapters[r.chapIdx + 1];
-      if (nextChap && !isDownloaded(nextChap.id, r.inVault) && r.preloadedChapId !== nextChap.id) {
+      if (nextChap && !isDownloaded(nextChap.id, dlScope) && r.preloadedChapId !== nextChap.id) {
         r.preloadedChapId = nextChap.id;
         gql(M_FETCH_PAGES, { chapterId: nextChap.id }, 15000, r.inVault).catch(() => { });
       }
@@ -3517,6 +4230,7 @@
     const r = state.reader;
     const chap = r.chapters[r.chapIdx];
     if (!chap) return;
+    const dlScope = r.isRemote ? 'remote' : r.inVault;
 
     const reachedEnd = pageIdx >= r.pages.length - 1;
     if (!reachedEnd && pageIdx === r.lastSavedPage) return;
@@ -3531,13 +4245,30 @@
         patch.isRead = true;
         r.markedRead = true;
         if (!r.inVault && Extras) Extras.recordStat({ chaptersCompleted: 1 });
-        if (state.prefs.autoDelRead && isDownloaded(chap.id, r.inVault) && Offline) {
-          Offline.deleteDownload(dlKey(chap.id, r.inVault)).then(() => refreshDownloadsIndex()).catch(() => { });
+        if (state.prefs.autoDelRead && isDownloaded(chap.id, dlScope) && Offline) {
+          Offline.deleteDownload(dlKey(chap.id, dlScope)).then(() => refreshDownloadsIndex()).catch(() => { });
         }
       }
       r.lastSavedPage = pageIdx;
 
-      if (Offline && r.manga) Offline.updateLocalChapterProgress(dlKey(r.manga.id, r.inVault), chap.id, patch);
+      if (Offline && r.manga) Offline.updateLocalChapterProgress(dlKey(r.manga.id, dlScope), chap.id, patch);
+
+      if (r.isRemote && Remote) {
+        Remote.saveChapterProgress(chap.id, patch);
+        if (r.manga) {
+          Remote.recordHistory({
+            mangaId: r.manga.id,
+            mangaTitle: r.manga.title,
+            thumbnailUrl: r.manga.thumbnailUrl || '',
+            chapterId: chap.id,
+            chapterName: chap.name,
+            lastPageRead: pageIdx,
+            pageCount: r.pages.length,
+            isRead: !!(patch.isRead || r.markedRead)
+          });
+        }
+        return;
+      }
 
       // Si estamos en la bóveda aislada: NUNCA toca el Suwayomi normal (4567)
       if (r.inVault) {
@@ -3590,6 +4321,7 @@
     const img = document.createElement('img');
     img.className = effectiveReaderMode() === 'vertical' ? 'reader-page-img' : 'reader-paged-img';
     img.decoding = 'async';
+    if (/^https?:\/\//i.test(url)) img.referrerPolicy = 'no-referrer';
     img.alt = `Página ${pageNum + 1}`;
     img.src = url;
     return img;
@@ -3634,7 +4366,8 @@
 
     const nextChap = r.chapIdx < r.chapters.length - 1 ? r.chapters[r.chapIdx + 1] : null;
     const prevChap = r.chapIdx > 0 ? r.chapters[r.chapIdx - 1] : null;
-    const nextLocked = nextChap && (r.inVault ? state.vaultOffline : state.offline) && !isDownloaded(nextChap.id, r.inVault);
+    const dlScope = r.isRemote ? 'remote' : r.inVault;
+    const nextLocked = nextChap && (r.inVault ? state.vaultOffline : state.offline) && !isDownloaded(nextChap.id, dlScope);
 
     const endCard = document.createElement('div');
     endCard.className = 'reader-end-card';
@@ -3769,12 +4502,14 @@
     const r = state.reader;
     if (newIdx < 0 || newIdx >= r.chapters.length || !r.manga) return;
     const target = r.chapters[newIdx];
+    const dlScope = r.isRemote ? 'remote' : r.inVault;
     const isOff = r.inVault ? state.vaultOffline : state.offline;
-    if (isOff && !isDownloaded(target.id, r.inVault)) {
+    if (isOff && !isDownloaded(target.id, dlScope)) {
       showToast('Ese capítulo no está descargado en tu móvil');
       return;
     }
-    location.replace(`#${r.inVault ? 'vread' : 'read'}/${r.manga.id}/${target.id}`);
+    const pref = r.inVault ? 'vread' : (r.isRemote ? 'rread' : 'read');
+    location.replace(`#${pref}/${encodeURIComponent(r.manga.id)}/${encodeURIComponent(target.id)}`);
   }
 
   // Gestos del lector: brillo deslizando por borde izquierdo + swipe paginado + doble toque zoom
@@ -3873,8 +4608,10 @@
   // Controles de las barras del lector
   $('readerBackBtn').addEventListener('click', () => {
     if (history.length > 1) history.back();
-    else if (state.reader.manga) navigateHash(`#${state.reader.inVault ? 'vmanga' : 'manga'}/${state.reader.manga.id}`);
-    else navigateHash('#library');
+    else if (state.reader.manga) {
+      const pref = state.reader.inVault ? 'vmanga' : (state.reader.isRemote ? 'rmanga' : 'manga');
+      navigateHash(`#${pref}/${encodeURIComponent(state.reader.manga.id)}`);
+    } else navigateHash('#library');
   });
 
   readerBookmarkBtn.addEventListener('click', () => {
@@ -3887,7 +4624,8 @@
       mangaTitle: r.manga.title,
       chapterId: chap.id,
       chapterName: chap.name,
-      pageIdx: r.pageIdx
+      pageIdx: r.pageIdx,
+      isRemote: !!r.isRemote
     });
     updateBookmarkBtnUi();
     showToast(added ? `Página ${r.pageIdx + 1} guardada en marcadores` : 'Marcador quitado');
@@ -4017,6 +4755,7 @@
     const listDesc = r.chapters.slice().reverse();
     readerSheetBackdrop.classList.remove('hidden');
     readerSheet.classList.remove('hidden');
+    const dlScope = r.isRemote ? 'remote' : r.inVault;
     readerSheet.innerHTML = `
       <div class="sheet-title">
         <span>Capítulos (${r.chapters.length})</span>
@@ -4024,10 +4763,10 @@
       </div>
       <div>
         ${listDesc.map((c) => {
-          const dl = isDownloaded(c.id, r.inVault);
+          const dl = isDownloaded(c.id, dlScope);
           const locked = (r.inVault ? state.vaultOffline : state.offline) && !dl;
           return `
-            <div class="chapter-row ${c.isRead ? 'read' : ''} ${locked ? 'offline-locked' : ''}" data-jump-id="${c.id}" style="${current && c.id === current.id ? 'background:var(--accent-soft);border-radius:10px' : ''}">
+            <div class="chapter-row ${c.isRead ? 'read' : ''} ${locked ? 'offline-locked' : ''}" data-jump-id="${esc(c.id)}" style="${current && String(c.id) === String(current.id) ? 'background:var(--accent-soft);border-radius:10px' : ''}">
               <span class="chapter-dot"></span>
               <div class="chapter-info">
                 <div class="chapter-name">${esc(c.name)}</div>
@@ -4054,5 +4793,6 @@
 
   // ---------------- Arranque ----------------
   checkStartupPin();
+  updateRemoteBanner();
   refreshDownloadsIndex().then(() => handleRoute());
 })();

@@ -90,24 +90,24 @@
   }
 
   function isPageBookmarked(chapterId, pageIdx) {
-    return getPageBookmarks().some((b) => b.chapterId === chapterId && b.pageIdx === pageIdx);
+    return getPageBookmarks().some((b) => String(b.chapterId) === String(chapterId) && b.pageIdx === pageIdx);
   }
 
-  function togglePageBookmark({ mangaId, mangaTitle, chapterId, chapterName, pageIdx }) {
+  function togglePageBookmark({ mangaId, mangaTitle, chapterId, chapterName, pageIdx, isRemote = false }) {
     const list = getPageBookmarks();
-    const idx = list.findIndex((b) => b.chapterId === chapterId && b.pageIdx === pageIdx);
+    const idx = list.findIndex((b) => String(b.chapterId) === String(chapterId) && b.pageIdx === pageIdx);
     if (idx >= 0) {
       list.splice(idx, 1);
       savePageBookmarks(list);
       return false;
     }
-    list.unshift({ mangaId, mangaTitle, chapterId, chapterName, pageIdx, savedAt: Date.now() });
+    list.unshift({ mangaId, mangaTitle, chapterId, chapterName, pageIdx, isRemote: !!isRemote, savedAt: Date.now() });
     savePageBookmarks(list);
     return true;
   }
 
   function removePageBookmark(chapterId, pageIdx) {
-    const list = getPageBookmarks().filter((b) => !(b.chapterId === chapterId && b.pageIdx === pageIdx));
+    const list = getPageBookmarks().filter((b) => !(String(b.chapterId) === String(chapterId) && b.pageIdx === pageIdx));
     savePageBookmarks(list);
   }
 

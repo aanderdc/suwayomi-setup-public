@@ -119,7 +119,8 @@
       const key = mediaCacheKey('cover', mangaId);
       const existing = await cache.match(key);
       if (existing) return;
-      const res = await fetch(thumbnailUrl);
+      const opts = /^https?:\/\//i.test(thumbnailUrl) ? { referrerPolicy: 'no-referrer' } : undefined;
+      const res = await fetch(thumbnailUrl, opts);
       if (res && res.ok) {
         await cache.put(key, res);
       }
@@ -179,7 +180,8 @@
         const idx = cursor++;
         const url = pageUrls[idx];
         const key = mediaCacheKey('page', chapter.id, idx);
-        const res = await fetch(url);
+        const opts = /^https?:\/\//i.test(url) ? { referrerPolicy: 'no-referrer' } : undefined;
+        const res = await fetch(url, opts);
         if (!res || !res.ok) throw new Error(`Error descargando página ${idx + 1}`);
         const blob = await res.blob();
         totalBytes += blob.size || 0;
@@ -304,7 +306,7 @@
     if (!saved || !saved.chapters) return;
     let changed = false;
     for (const c of saved.chapters) {
-      if (c.id === chapterId) {
+      if (String(c.id) === String(chapterId)) {
         if (typeof patch.lastPageRead === 'number') c.lastPageRead = patch.lastPageRead;
         if (typeof patch.isRead === 'boolean') c.isRead = patch.isRead;
         c.lastReadAt = String(Math.floor(Date.now() / 1000));

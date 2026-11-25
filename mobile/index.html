@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/movil/icon-192.png">
   <link rel="icon" type="image/svg+xml" href="/movil/icon.svg">
   <link rel="apple-touch-icon" sizes="192x192" href="/movil/icon-192.png">
-  <link rel="stylesheet" href="/movil/styles.css?v=12">
+  <link rel="stylesheet" href="/movil/styles.css?v=13">
 </head>
 <body>
   <div id="app">
@@ -25,10 +25,18 @@
       <div id="headerSub" class="header-sub hidden"></div>
     </header>
 
+    <!-- Banner de modo remoto activo (sin PC / servidor externo) -->
+    <div id="remoteBanner" class="remote-banner hidden">
+      <span class="remote-dot"></span>
+      <span id="remoteBannerText" class="offline-banner-text">Modo directo (MangaDex · Sin PC)</span>
+      <button id="remoteSwitchBtn" class="offline-retry-btn" type="button">Cambiar</button>
+    </div>
+
     <!-- Banner de modo sin conexión (tipo Spotify) -->
     <div id="offlineBanner" class="offline-banner hidden">
       <span class="offline-dot"></span>
       <span class="offline-banner-text">Sin conexión con el PC · Solo capítulos descargados</span>
+      <button id="offlineRemoteBtn" class="offline-retry-btn" type="button">Modo remoto</button>
       <button id="offlineRetryBtn" class="offline-retry-btn" type="button">Conectar</button>
     </div>
 
@@ -167,8 +175,9 @@
     <div id="toast" class="toast hidden"></div>
   </div>
 
-  <script src="/movil/offline.js?v=12"></script>
-  <script src="/movil/extras.js?v=12"></script>
-  <script src="/movil/app.js?v=12"></script>
+  <script src="/movil/offline.js?v=13"></script>
+  <script src="/movil/extras.js?v=13"></script>
+  <script src="/movil/remote.js?v=13"></script>
+  <script src="/movil/app.js?v=13"></script>
 </body>
 </html>

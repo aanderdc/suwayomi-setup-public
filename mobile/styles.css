@@ -1443,3 +1443,72 @@ button, input, select {
   border-color: rgba(255, 77, 90, 0.45);
   color: #ff9aa2;
 }
+
+/* ---------------- Modo remoto (sin PC / servidor externo) ---------------- */
+.remote-banner {
+  position: sticky;
+  top: 0;
+  z-index: 19;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #122130;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.35);
+  font-size: 12px;
+  color: #93c5fd;
+}
+
+.remote-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #38bdf8;
+  flex: 0 0 auto;
+}
+
+.remote-input {
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+}
+
+.remote-input:focus {
+  border-color: #38bdf8;
+}
+
+.remote-status {
+  margin-top: 7px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.remote-status.ok {
+  color: var(--green);
+}
+
+.remote-status.err {
+  color: #ff8690;
+}
+
+.worker-code-box {
+  background: #090c12;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #cfe4ff;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre;
+  user-select: text;
+  -webkit-user-select: text;
+}

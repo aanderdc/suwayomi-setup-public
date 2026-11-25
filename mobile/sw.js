@@ -1,12 +1,13 @@
-const CACHE_NAME = 'suwayomi-movil-v12';
+const CACHE_NAME = 'suwayomi-movil-v13';
 const MEDIA_CACHE = 'suwayomi-offline-media-v1';
 const SHELL_URLS = [
   '/movil/',
   '/movil/index.html',
-  '/movil/styles.css?v=12',
-  '/movil/offline.js?v=12',
-  '/movil/extras.js?v=12',
-  '/movil/app.js?v=12',
+  '/movil/styles.css?v=13',
+  '/movil/offline.js?v=13',
+  '/movil/extras.js?v=13',
+  '/movil/remote.js?v=13',
+  '/movil/app.js?v=13',
   '/movil/manifest.json',
   '/movil/icon-192.png',
   '/movil/icon-512.png',
@@ -33,6 +34,19 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function fetchWithTimeout(req, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), ms);
+    fetch(req).then((res) => {
+      clearTimeout(timer);
+      resolve(res);
+    }, (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -54,8 +68,27 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Recursos estáticos versionados e iconos: cache-first para arranque instantáneo con el PC apagado
+  const isStaticAsset = url.search.includes('v=') || /\.(png|svg|json|css|js)$/i.test(url.pathname);
+  if (isStaticAsset && !url.pathname.endsWith('.html')) {
+    event.respondWith(
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
+        return fetch(req).then((res) => {
+          if (res && res.ok) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => { });
+          }
+          return res;
+        });
+      })
+    );
+    return;
+  }
+
+  // HTML principal (/movil/ o /movil/index.html): red rápida (2.2s máx) y fallback a caché local
   event.respondWith(
-    fetch(req)
+    fetchWithTimeout(req, 2200)
       .then((res) => {
         if (res && res.ok) {
           const clone = res.clone();
