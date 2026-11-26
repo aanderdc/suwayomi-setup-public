@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = 'v17';
+  const APP_VERSION = 'v18';
   const API_URL = '/api/graphql';
   const VAULT_API_URL = '/movil/__vault__/api/graphql';
   const PREFS_KEY = 'suwayomi_mobile_prefs_v3';
@@ -393,10 +393,11 @@
     const mode = getConnMode();
     if (mode === 'direct') {
       const cfg = Remote.getConfig();
-      const langTxt = (cfg.lang || 'es').toUpperCase();
+      const srcMeta = (Remote.SOURCES_META || []).find((s) => s.id === cfg.source) || { name: 'MangaDex', badge: (cfg.lang || 'es').toUpperCase() };
+      const extra = cfg.source === 'mangadex' ? (cfg.lang || 'es').toUpperCase() : srcMeta.badge;
       remoteBannerText.textContent = Remote.needsWorkerSetup()
         ? 'Modo directo (sin PC) · Falta configurar puente gratis'
-        : `Modo directo (MangaDex · ${langTxt} · Sin PC)`;
+        : `Modo directo (${srcMeta.name} · ${extra} · Sin PC)`;
       remoteBanner.classList.remove('hidden');
     } else if (mode === 'remote_suwayomi') {
       const cfg = Remote.getConfig();
@@ -502,10 +503,21 @@
   }
 
   function attachCoverFallbacks(root) {
-    if (!root || !Offline) return;
-    root.querySelectorAll('img[data-cover-id]').forEach((img) => {
+    if (!root) return;
+    root.querySelectorAll('img[data-cover-id], img[data-remote-img]').forEach((img) => {
       img.addEventListener('error', async () => {
-        if (img.dataset.fallbackTried) return;
+        // 1) Si falló el proxy /img (ej. Worker v1/v2 antiguo), intentar URL directa una vez
+        if (!img.dataset.directTried && Remote && img.src && img.src.includes('/img?u=')) {
+          const directUrl = Remote.unwrapImageUrl(img.src);
+          if (directUrl && directUrl !== img.src) {
+            img.dataset.directTried = '1';
+            img.referrerPolicy = 'no-referrer';
+            img.src = directUrl;
+            return;
+          }
+        }
+        // 2) Fallback a portada guardada en caché offline
+        if (img.dataset.fallbackTried || !Offline || !img.dataset.coverId) return;
         img.dataset.fallbackTried = '1';
         const cid = img.dataset.coverId;
         const key = (cid.startsWith('v_') || cid.startsWith('r_')) ? cid : Number(cid);
@@ -615,12 +627,13 @@
         wrap.innerHTML = mangas.length ? `<div class="manga-grid">${mangas.map((m) => `
           <div class="manga-card" data-tag-rem-m="${esc(m.id)}">
             <div class="manga-cover-wrap">
-              <img src="${esc(m.thumbnailUrl || '')}" referrerpolicy="no-referrer" alt="" loading="lazy">
+              <img src="${esc(m.thumbnailUrl || '')}" data-remote-img="1" referrerpolicy="no-referrer" alt="" loading="lazy">
               <div class="manga-cover-grad"></div>
               <div class="manga-card-title">${esc(m.title)}</div>
             </div>
           </div>
-        `).join('')}</div>` : '<p style="font-size:12.5px;color:var(--muted)">Sin resultados en MangaDex para esta etiqueta.</p>';
+        `).join('')}</div>` : '<p style="font-size:12.5px;color:var(--muted)">Sin resultados para esta etiqueta.</p>';
+        attachCoverFallbacks(wrap);
         wrap.querySelectorAll('[data-tag-rem-m]').forEach((c) => {
           c.addEventListener('click', () => {
             closeAppSheet();
@@ -2752,31 +2765,38 @@
   }
 
   async function renderDirectExplore(loadNow = false) {
-    const cfg = Remote ? Remote.getConfig() : { lang: 'es' };
-    headerTitle.textContent = 'Explorar · MangaDex';
-    headerActions.innerHTML = `
-      <button id="dirLangCycleBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">Idioma: ${esc((cfg.lang || 'es').toUpperCase())}</button>
-    `;
-    $('dirLangCycleBtn').addEventListener('click', () => {
-      const order = ['es', 'es-la', 'en', 'all'];
-      const cur = cfg.lang || 'es';
-      const next = order[(order.indexOf(cur) + 1) % order.length];
-      Remote.saveConfig({ lang: next });
-      updateRemoteBanner();
-      state.remotePage = 1;
-      state.remoteMangas = [];
-      showToast('Idioma MangaDex: ' + next.toUpperCase());
-      renderDirectExplore(true);
-    });
+    const cfg = Remote ? Remote.getConfig() : { source: 'mangadex', contentType: 'all', lang: 'es' };
+    const activeSrc = cfg.source || 'mangadex';
+    const activeType = cfg.contentType || 'all';
+    const srcMeta = (Remote && Remote.SOURCES_META || []).find((s) => s.id === activeSrc) || { name: 'MangaDex', badge: 'ES/EN' };
+
+    headerTitle.textContent = `Explorar · ${srcMeta.name}`;
+    headerActions.innerHTML = activeSrc === 'mangadex'
+      ? `<button id="dirLangCycleBtn" class="secondary-btn" type="button" style="padding:6px 10px;font-size:12px">Idioma: ${esc((cfg.lang || 'es').toUpperCase())}</button>`
+      : `<span class="select-pill" style="color:#93c5fd;border-color:rgba(56,189,248,0.4)">${esc(srcMeta.badge)}</span>`;
+    const langBtn = $('dirLangCycleBtn');
+    if (langBtn) {
+      langBtn.addEventListener('click', () => {
+        const order = ['es', 'es-la', 'en', 'all'];
+        const cur = cfg.lang || 'es';
+        const next = order[(order.indexOf(cur) + 1) % order.length];
+        Remote.saveConfig({ lang: next });
+        updateRemoteBanner();
+        state.remotePage = 1;
+        state.remoteMangas = [];
+        showToast('Idioma MangaDex: ' + next.toUpperCase());
+        renderDirectExplore(true);
+      });
+    }
 
     if (!Remote || Remote.needsWorkerSetup()) {
       headerSub.classList.add('hidden');
       mainContent.innerHTML = `
         <div class="empty-state">
           <h3>Configura tu puente gratuito (2 min)</h3>
-          <p>Para leer desde <strong>MangaDex con tu PC apagado</strong>, crea un Cloudflare Worker gratuito (100.000 peticiones/día, 0€) y pega su URL en Ajustes.</p>
+          <p>Para leer <strong>Mangas y Manhwas con tu PC apagado</strong> (MangaDex, LeerCapitulo ES y WeebCentral EN), crea un Cloudflare Worker gratuito y pega su URL en Ajustes.</p>
           <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-            <button id="dirOpenGuideBtn" class="primary-btn" type="button" style="max-width:210px">Ver código del Worker</button>
+            <button id="dirOpenGuideBtn" class="primary-btn" type="button" style="max-width:210px">Ver código Worker v3</button>
             <button id="dirGoSettingsBtn" class="secondary-btn" type="button">Pegar URL en Ajustes</button>
           </div>
         </div>
@@ -2787,20 +2807,57 @@
     }
 
     const safeQuickTags = Extras ? Extras.filterSafeTags(POPULAR_TAGS, shouldHideNsfw(false)) : POPULAR_TAGS;
+    const sourcesList = Remote.SOURCES_META || [];
+    const typeTabs = [
+      ['all', 'Todos'],
+      ['manhwa', 'Manhwas'],
+      ['manga', 'Mangas'],
+      ['manhua', 'Manhuas']
+    ];
+
     headerSub.classList.remove('hidden');
     headerSub.innerHTML = `
+      <div class="seg-control" style="margin-bottom:8px">
+        ${sourcesList.map((s) => `
+          <button class="seg-btn ${activeSrc === s.id ? 'active' : ''}" data-dsrc="${esc(s.id)}" type="button" style="padding:7px 4px;font-size:11.5px">
+            ${esc(s.name)} <span style="opacity:0.75;font-size:10px">${esc(s.badge)}</span>
+          </button>
+        `).join('')}
+      </div>
       <form id="dirSearchForm" class="search-box">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="#8e98a8"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
-        <input id="dirSearchInput" type="search" placeholder="Buscar en MangaDex sin PC..." value="${esc(state.remoteQuery)}">
+        <input id="dirSearchInput" type="search" placeholder="Buscar en ${esc(srcMeta.name)} sin PC..." value="${esc(state.remoteQuery)}">
       </form>
       <div class="chips-row">
+        ${typeTabs.map(([k, lbl]) => `<button class="chip ${activeType === k ? 'active' : ''}" data-dtype="${k}">${lbl}</button>`).join('')}
         <button class="chip ${state.remoteMode === 'POPULAR' && !state.remoteTag && !state.remoteQuery ? 'active' : ''}" data-dmode="POPULAR">Populares</button>
         <button class="chip ${state.remoteMode === 'LATEST' && !state.remoteTag && !state.remoteQuery ? 'active' : ''}" data-dmode="LATEST">Últimos</button>
         ${state.remoteTag ? `<button class="chip active" data-dtag="">🏷️ ${esc(state.remoteTag)} ×</button>` : ''}
-        ${safeQuickTags.slice(0, 14).map((t) => `<button class="chip ${state.remoteTag === t ? 'active' : ''}" data-dtag="${esc(t)}">${esc(t)}</button>`).join('')}
+        ${safeQuickTags.slice(0, 12).map((t) => `<button class="chip ${state.remoteTag === t ? 'active' : ''}" data-dtag="${esc(t)}">${esc(t)}</button>`).join('')}
       </div>
     `;
 
+    headerSub.querySelectorAll('[data-dsrc]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const nextSrc = b.dataset.dsrc;
+        if (nextSrc === activeSrc) return;
+        Remote.saveConfig({ source: nextSrc });
+        updateRemoteBanner();
+        state.remotePage = 1;
+        state.remoteMangas = [];
+        renderDirectExplore(true);
+      });
+    });
+    headerSub.querySelectorAll('[data-dtype]').forEach((ch) => {
+      ch.addEventListener('click', () => {
+        const nextType = ch.dataset.dtype;
+        if (nextType === activeType) return;
+        Remote.saveConfig({ contentType: nextType });
+        state.remotePage = 1;
+        state.remoteMangas = [];
+        renderDirectExplore(true);
+      });
+    });
     $('dirSearchForm').addEventListener('submit', (e) => {
       e.preventDefault();
       const q = $('dirSearchInput').value.trim();
@@ -2837,7 +2894,10 @@
   async function loadDirectExplorePage() {
     if (state.remotePage === 1) mainContent.innerHTML = '<div class="spinner"></div>';
     try {
+      const cfg = Remote.getConfig();
       const res = await Remote.browseMangas({
+        source: cfg.source,
+        contentType: cfg.contentType,
         mode: state.remoteMode,
         query: state.remoteQuery,
         tag: state.remoteTag,
@@ -2850,34 +2910,41 @@
       setOfflineMode(false);
       drawDirectExploreGrid();
     } catch (err) {
-      const msg = err && err.message === 'NO_WORKER_URL'
-        ? 'Configura la URL de tu Cloudflare Worker en Ajustes.'
-        : 'No se pudo conectar con el puente de MangaDex. Revisa tu conexión o la URL del Worker en Ajustes.';
+      const isUpgrade = err && err.message === 'WORKER_UPGRADE_NEEDED';
+      const msg = isUpgrade
+        ? 'Tu Cloudflare Worker todavía tiene una versión anterior. Pega el código Worker v3 en Cloudflare (tarda 10 seg) para activar LeerCapitulo (ES), WeebCentral (EN) y portadas mejoradas.'
+        : (err && err.message === 'NO_WORKER_URL'
+          ? 'Configura la URL de tu Cloudflare Worker en Ajustes.'
+          : 'No se pudo conectar con la fuente. Revisa tu conexión o actualiza tu Worker a v3 en Ajustes.');
       mainContent.innerHTML = `
         <div class="empty-state">
-          <h3>Error en Modo directo</h3>
+          <h3>${isUpgrade ? 'Actualiza tu Cloudflare Worker a v3' : 'Error en Modo directo'}</h3>
           <p>${esc(msg)}</p>
-          <div style="display:flex;gap:8px;justify-content:center">
-            <button id="dirErrRetry" class="primary-btn" style="max-width:150px">Reintentar</button>
+          <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+            ${isUpgrade ? '<button id="dirErrCode" class="primary-btn" style="max-width:210px">Ver código Worker v3</button>' : '<button id="dirErrRetry" class="primary-btn" style="max-width:150px">Reintentar</button>'}
             <button id="dirErrCfg" class="secondary-btn">Ajustes</button>
           </div>
         </div>
       `;
-      $('dirErrRetry').addEventListener('click', () => loadDirectExplorePage());
+      const codeBtn = $('dirErrCode');
+      if (codeBtn) codeBtn.addEventListener('click', openWorkerSetupSheet);
+      const retryBtn = $('dirErrRetry');
+      if (retryBtn) retryBtn.addEventListener('click', () => loadDirectExplorePage());
       $('dirErrCfg').addEventListener('click', () => navigateHash('#settings'));
     }
   }
 
   function drawDirectExploreGrid() {
     if (!state.remoteMangas.length) {
-      mainContent.innerHTML = '<div class="empty-state"><h3>Sin resultados en MangaDex</h3><p>Prueba con otro término, etiqueta o cambia el idioma arriba a la derecha.</p></div>';
+      mainContent.innerHTML = '<div class="empty-state"><h3>Sin resultados</h3><p>Prueba con otro término, cambia entre Manhwas/Mangas o prueba otra fuente arriba.</p></div>';
       return;
     }
+    const colsCls = state.prefs.gridCols === 2 ? ' cols-2' : (state.prefs.gridCols === 4 ? ' cols-4' : '');
     mainContent.innerHTML = `
-      <div class="manga-grid">${state.remoteMangas.map((m) => `
+      <div class="manga-grid${colsCls}">${state.remoteMangas.map((m) => `
         <div class="manga-card" data-rmanga-id="${esc(m.id)}">
           <div class="manga-cover-wrap">
-            <img src="${esc(m.thumbnailUrl || '')}" referrerpolicy="no-referrer" alt="" loading="lazy">
+            <img src="${esc(m.thumbnailUrl || '')}" data-remote-img="1" data-cover-id="${esc(dlKey(m.id, 'remote'))}" referrerpolicy="no-referrer" alt="" loading="lazy">
             <div class="manga-cover-grad"></div>
             ${m.inLibrary ? '<span class="manga-badge in-lib">En biblioteca</span>' : ''}
             <div class="manga-card-title">${esc(m.title)}</div>
@@ -2886,6 +2953,7 @@
       `).join('')}</div>
       ${state.remoteHasNext ? '<div style="margin-top:14px"><button id="dirLoadMore" class="secondary-btn" style="width:100%">Cargar más</button></div>' : ''}
     `;
+    attachCoverFallbacks(mainContent);
     mainContent.querySelectorAll('.manga-card').forEach((card) => {
       card.addEventListener('click', () => navigateHash('#rmanga/' + encodeURIComponent(card.dataset.rmangaId)));
     });
@@ -3166,7 +3234,7 @@
       <div class="settings-card" style="border-color:rgba(56,189,248,0.35)">
         <div style="font-size:14px;font-weight:700;margin-bottom:4px;color:#93c5fd">Modo de conexión (PC / Remoto sin PC)</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.4">
-          Cambia entre tu PC local, lectura directa desde <strong>MangaDex sin PC</strong> o un servidor Suwayomi en la nube/Raspberry Pi.
+          Cambia entre tu PC local, lectura directa sin PC (<strong>MangaDex</strong>, <strong>LeerCapitulo ES</strong> y <strong>WeebCentral EN</strong> con Mangas y Manhwas) o un servidor Suwayomi remoto.
         </div>
         <div class="seg-control" style="margin-bottom:12px">
           <button class="seg-btn ${rCfg.mode === 'local' ? 'active' : ''}" data-conn-mode="local" type="button">PC local</button>
@@ -3185,7 +3253,7 @@
             </div>
             <div style="display:flex;gap:8px;margin-top:8px">
               <button id="remWorkerSaveBtn" class="primary-btn" type="button" style="flex:1;padding:9px 10px;font-size:13px">Guardar y probar</button>
-              <button id="remWorkerCodeBtn" class="secondary-btn" type="button" style="padding:9px 10px;font-size:12.5px">Ver código Worker</button>
+              <button id="remWorkerCodeBtn" class="secondary-btn" type="button" style="padding:9px 10px;font-size:12.5px">Código Worker v3</button>
             </div>
             <div id="remWorkerStatus" class="remote-status"></div>
           </div>

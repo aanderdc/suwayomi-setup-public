@@ -1,24 +1,17 @@
-# Puente gratuito Cloudflare Worker para Modo Directo (sin PC)
+# Puente gratuito Cloudflare Worker para Modo Directo Multi-fuente (sin PC)
 
-El navegador del móvil bloquea por seguridad (CORS) las peticiones directas desde `https://tu-pc.ts.net/movil/` hacia `https://api.mangadex.org`.
-Este pequeño Worker gratuito de **Cloudflare** (100.000 peticiones al día gratis, sin tarjeta) actúa como tu puente privado para poder buscar y leer desde **MangaDex** con tu PC completamente apagado.
+Este Worker gratuito de **Cloudflare** (100.000 peticiones al día gratis, sin tarjeta) actúa como puente privado para que la app móvil (`/movil/`) pueda leer **con tu PC completamente apagado** desde **3 fuentes** con Mangas, Manhwas y Manhuas:
 
-> Seguridad: el código de [mangadex-worker.js](mangadex-worker.js) **solo** acepta peticiones `GET` de lectura hacia `https://api.mangadex.org` (`/manga`, `/manga/tag`, `/manga/:id/feed`, `/at-home/server/:id`). No sirve como proxy abierto.
+1. **MangaDex** (`ES / ES-LA / EN`) — con filtros *Todos / Manhwas / Mangas / Manhuas*, etiquetas y `+18`.
+2. **LeerCapitulo** (`ES`) — enorme catálogo de **Mangas, Manhwas y Manhuas en español**.
+3. **WeebCentral** (`EN`) — catálogo muy completo de **Manhwas y Mangas** de alta calidad.
 
-## Cómo crearlo en 2 minutos (gratis)
+> Seguridad: el código de [`mangadex-worker.js`](mangadex-worker.js) solo acepta peticiones `GET` hacia las 3 fuentes y sus servidores de imágenes (nunca actúa como proxy abierto).
 
-1. Crea o entra en tu cuenta gratuita de [Cloudflare Dashboard](https://dash.cloudflare.com/).
-2. En el menú lateral izquierdo ve a **Compute (Workers)** → **Workers & Pages** → **Create** → **Start with Hello World!** (o *Create Worker*).
-3. Ponle un nombre (por ejemplo `mangadex-puente`) y pulsa **Deploy**.
-4. Pulsa **Edit code**, borra el código de ejemplo y pega el contenido completo de [`mangadex-worker.js`](mangadex-worker.js) (también puedes copiarlo con 1 toque desde **Ajustes → Modo de conexión → Ver código del Worker** dentro de la app móvil).
-5. Pulsa **Deploy** arriba a la derecha.
-6. Copia la URL que te da Cloudflare (por ejemplo `https://mangadex-puente.tu-usuario.workers.dev`).
-7. En tu móvil abre **Suwayomi Móvil → Ajustes → Modo de conexión**, elige **Directo (MangaDex sin PC)**, pega tu URL del Worker y pulsa **Guardar y probar**.
+## Cómo crearlo o actualizarlo en 2 minutos (gratis)
 
-¡Listo! Aunque apagues el PC, podrás abrir la app instalada en tu móvil y leer directamente.
-
----
-
-## Alternativa: usar un servidor Suwayomi remoto (todas tus extensiones 24/7)
-
-Si quieres tener **todas tus extensiones de scans** (Keiyoushi, etc.) disponibles con tu PC apagado, puedes instalar Suwayomi-Server en una Raspberry Pi, mini-PC o VPS (por ejemplo Oracle Cloud Free Tier) con Tailscale, y en **Ajustes → Modo de conexión** elegir **Suwayomi remoto (URL)** pegando su dirección (`https://tu-vps.ts.net`).
+1. Entra en tu cuenta gratuita de [Cloudflare Dashboard](https://dash.cloudflare.com/).
+2. Ve a **Compute (Workers)** → **Workers & Pages** → crea un Worker (o abre el tuyo existente y pulsa **Edit code**).
+3. Borra el código anterior, pega el contenido completo de [`mangadex-worker.js`](mangadex-worker.js) (también puedes copiarlo con 1 toque desde **Ajustes → Modo de conexión → Ver código Worker** dentro de la app móvil) y pulsa **Deploy**.
+4. Copia la URL que te da Cloudflare (por ejemplo `https://tu-worker.workers.dev`).
+5. En tu móvil abre **Suwayomi Móvil → Ajustes → Modo de conexión**, elige **Directo (sin PC)**, pega tu URL y pulsa **Guardar y probar**.
