@@ -9,7 +9,7 @@
 param(
     [int]$Port = 4568,
     [int]$VaultPort = 4569,
-    [string]$WebRoot = (Join-Path $PSScriptRoot 'mobile')
+    [string]$WebRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) 'mobile')
 )
 
 $ErrorActionPreference = 'Stop'

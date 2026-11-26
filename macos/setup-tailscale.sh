@@ -62,7 +62,7 @@ copy_url() {
 
 ensure_mobile_route() {
     local ts="$1"
-    start_mobile_server "$ROOT/mobile"
+    start_mobile_server "$(dirname "$ROOT")/mobile"
     "$ts" serve --bg --set-path /movil "http://127.0.0.1:$SUWAYOMI_MOBILE_PORT" >/dev/null 2>&1 || true
 }
 

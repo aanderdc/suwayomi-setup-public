@@ -1,116 +1,125 @@
-# Suwayomi Setup (En desarrollo)
+# Suwayomi Setup
 
-Scripts para instalar y manejar **[Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server)**
-(lector de manga autoalojado) en **Windows** y **macOS** sin escribir comandos: un panel con botones para
-instalar, encender, apagar y abrir el lector en el navegador.
+Instalador visual, panel de control y **app móvil instalable (PWA)** para **[Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server)** en **Windows** y **macOS**, sin escribir comandos.
 
 > **Aviso.** Este repositorio es un proyecto independiente, sin relación con Suwayomi ni con Keiyoushi.
 > **No contiene ni distribuye manga ni extensiones de terceros.** El instalador descarga Suwayomi de su
-> página oficial de GitHub, y las extensiones (fuentes) las eliges tú desde la interfaz de Suwayomi.
-> Tú eres responsable del contenido al que accedas: respeta los derechos de autor y las leyes de tu país, y
-> apoya a los autores comprando las ediciones oficiales cuando puedas.
+> página oficial de GitHub, y las fuentes/extensiones las eliges tú. Tú eres responsable del contenido al que
+> accedas: respeta los derechos de autor y las leyes de tu país, y apoya a los autores comprando las ediciones
+> oficiales cuando puedas.
 
-## Qué hace cada archivo
+---
 
-| Windows | macOS | Para qué sirve |
-|---|---|---|
-| `Suwayomi.bat` | `Suwayomi.command` | Abre el panel de control (doble clic). |
-| `suwayomi-gui.ps1` | `suwayomi-gui.sh` | El panel: estado, encender, apagar, abrir, registro, carpeta de datos. En macOS usa ventanas nativas; con `--terminal` ofrece un menú de texto. |
-| `install.ps1` | `install.sh` | Descarga la release oficial de Suwayomi (incluye su propio Java) y la extrae. |
-| `setup-sources.ps1` | `setup-sources.sh` | Con el servidor encendido, añade el repositorio de extensiones [Keiyoushi](https://github.com/keiyoushi/extensions). |
-| `clear-history.ps1` | `clear-history.sh` | Borra el historial de lectura completo o de un manga concreto (`-MangaId` / `--manga-id`), con copia de seguridad previa. |
-| `update-suwayomi.ps1` | `update-suwayomi.sh` | Comprueba la última versión oficial en GitHub y actualiza Suwayomi conservando tus datos y biblioteca. |
-| `backup-restore.ps1` | `backup-restore.sh` | Crea y restaura copias de seguridad (`database.mv.db` y `.tachibk` compatible con Mihon/Tachiyomi). |
-| `verificar-extensiones.ps1` | `verificar-extensiones.sh` | Comprueba en VirusTotal las extensiones instaladas (necesita una API key gratuita). |
-| `setup-tailscale.ps1` | `setup-tailscale.sh` | Asistente visual para usar Suwayomi desde el móvil con Tailscale (acceso privado HTTPS, código QR y control de suspensión). |
-| `mobile/` | `mobile/` | App web móvil instalable (PWA, ruta `/movil/`): lector tipo PDF o paginado, modo por manga, paso automático, auto-scroll manos libres, filtro cálido/sepia, reloj/batería y barra de progreso, Wake Lock, zoom, recorte de bordes, brillo táctil, doble página, tarjeta «Seguir leyendo», pull-to-refresh, selector aleatorio (`🎲`), columnas configurables (`2/3/4`), acciones de capítulos en lote (`⋮`), novedades, búsqueda global y por tags clicables, filtro +18, gestor de extensiones integrado, categorías, migración, marcadores, estadísticas, descargas offline con cola, exportar/importar ajustes JSON, **modo remoto híbrido sin PC (MangaDex vía Cloudflare Worker gratis o URL de Suwayomi remoto)**, bloqueo PIN y bóveda oculta aislada con historial privado. |
-| `cloudflare-worker/` | `cloudflare-worker/` | Puente CORS gratuito (`v3`) para Cloudflare Workers (100k req/día gratis) que activa el **Modo directo sin PC** con **MangaDex (ES/EN)**, **LeerCapitulo (ES)** y **WeebCentral (EN)** para leer Mangas, Manhwas y Manhuas con el PC apagado. |
-| `mobile-server.ps1` | `mobile-server.py` | Servidor local ligero (solo `127.0.0.1:4568`) que sirve `mobile/`, borrado de historial y una instancia aislada bajo demanda (`Tachidesk-Vault`, puerto `4569`) para la bóveda oculta sin dejar rastro en `localhost:4567`. |
-| `wake-pc.ps1` | `wake-pc.sh` | Utilidad opcional de Wake-on-LAN: muestra la dirección MAC local o envía un paquete mágico en tu red local. |
-| — | `common.sh` | Configuración compartida de los scripts de macOS. |
-| — | `crear-app.sh` | Opcional: crea `Suwayomi.app` para abrir el panel sin ventana de Terminal. |
+## Inicio rápido
 
-Instrucciones sencillas para usuarios finales: [`LEEME.txt`](LEEME.txt) (Windows) y
-[`LEEME-macOS.txt`](LEEME-macOS.txt) (macOS).
-
-## Requisitos
-
-- **Windows 10/11 x64** (PowerShell, ya incluido) o **macOS 12+** (Apple Silicon o Intel).
-- Conexión a internet. No necesitas instalar Java: el paquete oficial trae el suyo.
-
-## Instalación
-
-1. Descarga este repositorio (**Code → Download ZIP**) o clónalo con `git clone`, y extráelo en una carpeta fija.
-   No ejecutes nada desde dentro del zip.
-2. Abre el panel: `Suwayomi.bat` (Windows) o `Suwayomi.command` (macOS).
+1. Descarga el repositorio (**Code → Download ZIP**) o clónalo con `git clone` y extráelo en una carpeta fija.
+2. Haz doble clic en el lanzador de tu sistema:
+   - **Windows:** `Suwayomi.bat`
+   - **macOS:** `Suwayomi.command` *(si macOS avisa por script sin firma: `xattr -dr com.apple.quarantine . && chmod +x Suwayomi.command macos/*.sh`)*
 3. En el panel, por orden: **1. Instalar Suwayomi** → **Encender** → **2. Añadir repositorio de extensiones**.
-4. En el navegador (<http://localhost:4567>) ve a **Browse/Explorar → Extensions**, instala las fuentes que
-   quieras y empieza a leer.
+4. *(Opcional)* Pulsa **Acceso desde el móvil (Tailscale)** para escanear el QR e instalar la app móvil (`/movil/`) en tu Android o iPhone.
 
-Es normal que Windows (SmartScreen) o macOS (Gatekeeper) avisen con scripts sin firma digital. En macOS, si
-bloquea los archivos: `xattr -dr com.apple.quarantine . && chmod +x *.command *.sh` dentro de la carpeta.
+Guías detalladas para usuarios finales: [`docs/LEEME-Windows.txt`](docs/LEEME-Windows.txt) y [`docs/LEEME-macOS.txt`](docs/LEEME-macOS.txt).
 
-## Uso diario
+---
 
-Abre el panel y usa **Encender**, **Apagar** o **Abrir Suwayomi en el navegador**.
-**Cerrar la ventana del panel no apaga Suwayomi**; usa el botón **Apagar**.
+## Estructura del repositorio
 
-## Acceso desde el móvil (opcional, con Tailscale)
+```text
+suwayomi-setup-public/
+├── Suwayomi.bat               # Lanzador principal de Windows (doble clic)
+├── Suwayomi.command           # Lanzador principal de macOS (doble clic)
+├── README.md                  # Esta guía
+│
+├── windows/                   # Scripts y panel visual de Windows (.ps1)
+│   ├── suwayomi-gui.ps1       # Panel de control (bandeja, auto-abrir, auto-arranque)
+│   ├── install.ps1            # Descarga e instala Suwayomi + JRE incluido
+│   ├── setup-sources.ps1      # Añade el repositorio de extensiones Keiyoushi
+│   ├── setup-tailscale.ps1    # Asistente visual Tailscale HTTPS + QR + control suspensión
+│   ├── mobile-server.ps1      # Servidor local (127.0.0.1:4568) para /movil/ y bóveda aislada
+│   ├── clear-history.ps1      # Borra historial completo o de un manga concreto (con backup)
+│   ├── update-suwayomi.ps1    # Actualizador en 1 clic conservando biblioteca y datos
+│   ├── backup-restore.ps1     # Copias y restauración de database.mv.db y .tachibk
+│   ├── verificar-extensiones.ps1 / .bat  # Escáner opcional en VirusTotal
+│   └── wake-pc.ps1            # Utilidad opcional de Wake-on-LAN
+│
+├── macos/                     # Scripts y panel visual de macOS (.sh / .py)
+│   ├── common.sh              # Utilidades compartidas (ventanas nativas o --terminal)
+│   ├── suwayomi-gui.sh        # Panel de control para macOS
+│   ├── install.sh             # Instalador oficial para Apple Silicon e Intel
+│   ├── setup-sources.sh       # Añade repositorio Keiyoushi
+│   ├── setup-tailscale.sh     # Asistente Tailscale HTTPS privado
+│   ├── mobile-server.py       # Servidor local (127.0.0.1:4568) para /movil/ y bóveda aislada
+│   ├── clear-history.sh       # Borrado de historial (total o por --manga-id)
+│   ├── update-suwayomi.sh     # Actualizador de Suwayomi
+│   ├── backup-restore.sh      # Copias de seguridad y restauración
+│   ├── verificar-extensiones.sh  # Escáner opcional en VirusTotal
+│   ├── crear-app.sh           # Opcional: genera Suwayomi.app para el Dock/Launchpad
+│   └── wake-pc.sh             # Utilidad opcional de Wake-on-LAN
+│
+├── mobile/                    # App web móvil instalable (PWA en /movil/)
+│   ├── index.html, styles.css, app.js   # Interfaz y lector estilo Manga Dogs
+│   ├── remote.js              # Modo remoto sin PC (MangaDex, LeerCapitulo ES, WeebCentral EN)
+│   ├── offline.js             # Descargas locales tipo Spotify + sincronización diferida
+│   ├── extras.js              # Filtro +18, tags, PIN, bóveda, recorte de bordes, Wake Lock
+│   └── sw.js, manifest.json, icon-*     # Service Worker offline e iconos PWA
+│
+├── cloudflare-worker/         # Puente CORS gratuito (v3) para leer sin encender el PC
+│   ├── mangadex-worker.js     # Código listo para pegar en Cloudflare Workers (100k req/día gratis)
+│   └── README.md              # Guía paso a paso (2 minutos)
+│
+└── docs/                      # Guías sencillas en texto plano
+    ├── LEEME-Windows.txt
+    └── LEEME-macOS.txt
+```
 
-Si quieres leer desde tu móvil Android o iPhone (con WiFi o con datos móviles) sin abrir puertos del router ni exponer Suwayomi a Internet:
+---
 
-1. En el panel de control, pulsa **Acceso desde el móvil (Tailscale)**.
-2. Pulsa **Activar acceso desde el móvil** y sigue los avisos en pantalla (instala Tailscale, inicia sesión y activa HTTPS privado/Serve; nunca se activa Funnel).
-3. En tu móvil, instala la app **Tailscale**, entra con la **misma cuenta** y activa la conexión VPN.
-4. Escanea el **código QR** que muestra el asistente (en Windows) o abre el enlace privado `https://...ts.net/movil/` que se copia al portapapeles.
+## Qué incluye la app móvil (`/movil/`)
 
-La ruta `/movil/` abre un **lector móvil estilo app (PWA instalable)** diseñado para pantalla pequeña (sin instalar APKs): cuadrícula de portadas con barra inferior, modo continuo tipo PDF al 100% del ancho o paginado deslizando, filtro nocturno, **descargas locales para leer sin conexión (incluso con el PC apagado)** con sincronización automática al reconectar, y acceso al Suwayomi completo (`/`) desde *Ajustes* cuando quieras gestionar extensiones.
+- **Lector cómodo para móvil:** modo continuo tipo PDF (100% ancho, 0px de hueco) o paginado (`D→I` / `I→D`), modo por manga, paso automático al siguiente capítulo, auto-scroll manos libres, filtro nocturno + filtro cálido/sepia, brillo deslizando el borde izquierdo, zoom `2×`, recorte automático de márgenes blancos, doble página en tablet, reloj/batería, barra de progreso y Wake Lock.
+- **Biblioteca y descubrimiento:** tarjeta *Seguir leyendo*, pull-to-refresh, columnas configurables (`2/3/4`), selector aleatorio (`🎲`), novedades, categorías, migración de fuente, etiquetas/tags clicables, filtro `+18`, acciones en lote por capítulo (`⋮`) y gestor de extensiones integrado.
+- **Modo sin conexión (tipo Spotify):** descarga capítulos al almacenamiento del móvil (con cola pausable, auto-descarga de siguientes N y borrado al terminar) y sincroniza tu progreso al reconectar.
+- **Modo remoto sin PC (en Ajustes):**
+  - **Directo (sin PC)** vía tu propio Cloudflare Worker gratuito ([`cloudflare-worker/`](cloudflare-worker/README.md)): busca y lee **Mangas, Manhwas y Manhuas** desde **MangaDex (`ES/EN`)**, **LeerCapitulo (`ES`)** y **WeebCentral (`EN`)** con tu PC apagado.
+  - **Suwayomi remoto (URL):** conecta con otro Suwayomi alojado en una Raspberry Pi o VPS 24/7.
+- **Privacidad:** bloqueo con PIN de 4 dígitos, borrado de historial (total o por manga), exportar/importar ajustes JSON y **Bóveda oculta aislada** (5 toques en *Biblioteca*, instancia separada `Tachidesk-Vault` que no deja rastro en `localhost:4567/history` ni `/browse?tab=sources`, con su propio historial privado).
 
-En Windows, el propio asistente incluye un botón para **evitar que el PC se suspenda cuando está enchufado** (y restaurar tu ajuste anterior con un clic), ya que si el PC se suspende se corta la conexión desde el móvil.
+---
 
-## Configuración
+## Requisitos y rutas de datos
+
+- **Windows 10/11 x64** (PowerShell incluido) o **macOS 12+** (Apple Silicon o Intel). No hace falta instalar Java.
 
 | | Windows | macOS |
 |---|---|---|
 | Aplicación | `%USERPROFILE%\Suwayomi` | `~/Suwayomi` |
-| Datos (biblioteca, descargas, base de datos) | `%LOCALAPPDATA%\Tachidesk` | `~/Library/Application Support/Tachidesk` |
+| Datos (biblioteca, descargas, DB) | `%LOCALAPPDATA%\Tachidesk` | `~/Library/Application Support/Tachidesk` |
+| Bóveda oculta aislada | `%LOCALAPPDATA%\Tachidesk-Vault` | `~/Library/Application Support/Tachidesk-Vault` |
 
-En macOS puedes cambiarlo con las variables `SUWAYOMI_INSTALL_ROOT`, `SUWAYOMI_DATA_DIR` y `SUWAYOMI_PORT`.
-La versión instalada por defecto es `v2.4.2366`; cámbiala con `-Version` (Windows) o `--version` (macOS):
+Para elegir versión o carpeta personalizada desde consola:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -Version "v2.4.2366" -InstallDir "D:\Suwayomi"
+powershell -ExecutionPolicy Bypass -File .\windows\install.ps1 -Version "v2.4.2366" -InstallDir "D:\Suwayomi"
 ```
 ```bash
-bash install.sh --version v2.4.2366 --install-dir "$HOME/Suwayomi"
+bash macos/install.sh --version v2.4.2366 --install-dir "$HOME/Suwayomi"
 ```
 
-## Notas
+---
 
-- Los binarios de Suwayomi **no** están en este repositorio: se descargan de su release oficial.
-- En macOS el panel arranca `bin/Suwayomi-Server.jar` directamente con el JRE incluido, sin la ventana del
-  lanzador ni el icono de bandeja, y es el propio panel quien abre el navegador. **Apagar** envía primero una
-  señal de cierre limpio y solo fuerza el cierre si no responde en unos 10 s.
-- Evita apagar mientras Suwayomi descarga o actualiza la biblioteca.
-- Backup: con Suwayomi apagado, copia `database.mv.db` y la carpeta `downloads` de la carpeta de datos.
-- Para acceder desde el móvil de forma privada usa el botón **Acceso desde el móvil (Tailscale)** (no requiere abrir puertos ni cambiar `server.conf`). Para acceso directo en red local sin Tailscale, configura `server.ip` en `server.conf`.
-- Las extensiones son código de terceros que se ejecuta en tu equipo: instala solo las de repositorios en los
-  que confíes. Los scripts de este repositorio son texto plano y puedes leerlos antes de ejecutarlos.
-
-## Solución de problemas
+## Solución de problemas rápida
 
 - **El navegador no abre:** escribe <http://localhost:4567> a mano.
-- **Dice que el servidor no responde:** espera 30 segundos y pulsa **Abrir Suwayomi en el navegador**.
-- **Algo falla:** pulsa **Ver registro** y revisa el último error.
-- **Sigue activo tras apagar** (Windows): `netstat -ano | findstr 4567` da el PID; ciérralo con `taskkill /PID <pid> /F`.
-- **Sigue activo tras apagar** (macOS): `lsof -i :4567` da el PID; ciérralo con `kill <pid>`.
+- **Sigue activo tras apagar (Windows):** `netstat -ano | findstr 4567` → `taskkill /PID <pid> /F`.
+- **Sigue activo tras apagar (macOS):** `lsof -i :4567` → `kill <pid>`.
 - **macOS bloquea `java`:** `xattr -dr com.apple.quarantine ~/Suwayomi`.
 
 ## Posibles mejoras futuras
 
 - Soporte completo con instalador y panel visual para **Linux** (`.desktop` / GTK).
 - Notificaciones push nativas en el móvil al detectar capítulos nuevos en segundo plano.
-- Importación directa de copias `.tachibk` desde la propia app móvil (además del Suwayomi completo).
+- Importación directa de copias `.tachibk` desde la app móvil.
 - Sincronización con trackers externos (AniList / MyAnimeList) desde la interfaz móvil.
 
 ## Licencia

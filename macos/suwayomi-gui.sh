@@ -65,7 +65,7 @@ do_start() {
         return
     }
     mkdir -p "$DATA_DIR"
-    start_mobile_server "$ROOT/mobile"
+    start_mobile_server "$(dirname "$ROOT")/mobile"
     out="$DATA_DIR/suwayomi-stdout.log"
     # Se arranca el servidor directamente (sin la ventana del lanzador).
     # - initialOpenInBrowserEnabled=false: el navegador lo abre este panel, así no salen dos pestañas.

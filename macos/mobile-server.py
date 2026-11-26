@@ -18,7 +18,8 @@ from urllib.parse import parse_qs, urlsplit
 
 PORT = int(os.environ.get("SUWAYOMI_MOBILE_PORT", "4568"))
 VAULT_PORT = int(os.environ.get("SUWAYOMI_VAULT_PORT", "4569"))
-REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPTS_DIR)
 MOBILE_DIR = os.path.join(REPO_ROOT, "mobile")
 VAULT_DATA_DIR = os.path.expanduser("~/Library/Application Support/Tachidesk-Vault")
 ACTION_LOCK = threading.Lock()
@@ -35,7 +36,7 @@ def server_up(port=4567):
 
 def restart_suwayomi_mac():
     cmd = (
-        f'source "{REPO_ROOT}/common.sh" && '
+        f'source "{SCRIPTS_DIR}/common.sh" && '
         'dir="$(find_server_dir "$INSTALL_ROOT")" && '
         'java="$(find_java "$dir")" && '
         'mkdir -p "$DATA_DIR" && '
@@ -82,7 +83,7 @@ def start_vault_mac():
             return True, ""
         os.makedirs(VAULT_DATA_DIR, exist_ok=True)
         cmd = (
-            f'source "{REPO_ROOT}/common.sh" && '
+            f'source "{SCRIPTS_DIR}/common.sh" && '
             'dir="$(find_server_dir "$INSTALL_ROOT")" && '
             'java="$(find_java "$dir")" && '
             'cd "$dir" && '
@@ -203,11 +204,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             manga_args = ["--manga-id", val]
 
         with ACTION_LOCK:
-            script = os.path.join(REPO_ROOT, "clear-history.sh")
+            script = os.path.join(SCRIPTS_DIR, "clear-history.sh")
             try:
                 proc = subprocess.run(
                     ["bash", script, "--force", *manga_args],
-                    cwd=REPO_ROOT,
+                    cwd=SCRIPTS_DIR,
                     capture_output=True,
                     text=True,
                     timeout=35,
