@@ -772,6 +772,8 @@ button, input, select {
   font-size: 0;
   line-height: 0;
   background: #000;
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 900px;
 }
 
 .reader-page-slot:not(.loaded) {

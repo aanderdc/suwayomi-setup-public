@@ -1,12 +1,13 @@
-// Puente CORS gratuito en Cloudflare Workers para Suwayomi Movil (v3 Multi-fuente sin PC)
+// Puente CORS gratuito en Cloudflare Workers para Suwayomi Movil (v4 Multi-fuente + Edge Cache)
 // Fuentes soportadas: MangaDex (ES/EN), LeerCapitulo (ES - Mangas/Manhwas/Manhuas) y WeebCentral (EN - Manhwas/Mangas).
 // Despliegue gratuito (100.000 peticiones/dia): https://dash.cloudflare.com -> Workers & Pages -> Edit code -> Deploy
 
 const MD_API = 'https://api.mangadex.org';
 const LC_BASE = 'https://www.leercapitulo.co';
 const WC_BASE = 'https://weebcentral.com';
-const UA = 'SuwayomiMovilBridge/3.0';
+const UA = 'SuwayomiMovilBridge/4.0';
 const WC_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+const MAX_IMG_BYTES = 25 * 1024 * 1024;
 
 function corsHeaders(origin) {
   return {
@@ -348,8 +349,23 @@ async function handleWcPages(url, headers) {
   return jsonResp({ pages }, headers);
 }
 
+function cacheTtlForPath(pathname) {
+  if (pathname === '/img' || pathname === '/manga/tag') return 86400;
+  if (pathname === '/lc/browse' || pathname === '/lc/manga' || pathname === '/wc/browse' || pathname === '/wc/manga') return 240;
+  if (/^\/manga(\/[0-9a-f-]{36}(\/feed)?)?$/i.test(pathname)) return 180;
+  return 0;
+}
+
+function withCors(resp, headers, cacheState = '') {
+  const out = new Headers(resp.headers);
+  for (const [k, v] of Object.entries(headers)) out.set(k, v);
+  out.delete('set-cookie');
+  if (cacheState) out.set('X-Bridge-Cache', cacheState);
+  return new Response(resp.body, { status: resp.status, headers: out });
+}
+
 export default {
-  async fetch(request) {
+  async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '*';
     const headers = corsHeaders(origin);
 
@@ -358,8 +374,28 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/' || url.pathname === '/health') {
-      return jsonResp({ ok: true, bridge: 'suwayomi-movil-multi', v: 3, sources: ['mangadex', 'leercapitulo', 'weebcentral'] }, headers);
+      return jsonResp({ ok: true, bridge: 'suwayomi-movil-multi', v: 4, sources: ['mangadex', 'leercapitulo', 'weebcentral'] }, headers);
     }
+
+    const ttl = cacheTtlForPath(url.pathname);
+    const edgeCache = (ttl > 0 && typeof caches !== 'undefined' && caches.default) ? caches.default : null;
+    const cacheKey = edgeCache ? new Request(url.toString(), { method: 'GET' }) : null;
+    if (edgeCache && cacheKey) {
+      const hit = await edgeCache.match(cacheKey);
+      if (hit) return withCors(hit, headers, 'HIT');
+    }
+
+    const saveToEdge = (resp) => {
+      if (!edgeCache || !cacheKey || !resp || resp.status !== 200) return resp;
+      const toCacheHeaders = new Headers(resp.headers);
+      toCacheHeaders.set('Cache-Control', `public, max-age=${ttl}`);
+      toCacheHeaders.delete('set-cookie');
+      const [b1, b2] = resp.body ? resp.body.tee() : [null, null];
+      const cacheResp = new Response(b2, { status: resp.status, headers: toCacheHeaders });
+      const p = edgeCache.put(cacheKey, cacheResp).catch(() => { });
+      if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
+      return new Response(b1, { status: resp.status, headers: resp.headers });
+    };
 
     // Puente de imagenes (portadas y capitulos de las 3 fuentes) sin UA Mozilla para evitar DDoS-Guard
     if (url.pathname === '/img') {
@@ -373,20 +409,23 @@ export default {
         method: 'GET',
         headers: { 'Referer': ref, 'User-Agent': imgUa }
       });
+      const contentLen = parseInt(imgRes.headers.get('content-length') || '0', 10);
+      if (contentLen > MAX_IMG_BYTES) return jsonResp({ error: 'Image too large' }, headers, 413);
       const outHeaders = new Headers(imgRes.headers);
       for (const [k, v] of Object.entries(headers)) outHeaders.set(k, v);
       outHeaders.delete('set-cookie');
       if (imgRes.ok) outHeaders.set('Cache-Control', 'public, max-age=86400');
-      return new Response(imgRes.body, { status: imgRes.status, headers: outHeaders });
+      const finalResp = new Response(imgRes.body, { status: imgRes.status, headers: outHeaders });
+      return saveToEdge(finalResp);
     }
 
     // Rutas LeerCapitulo (ES) y WeebCentral (EN)
     try {
-      if (url.pathname === '/lc/browse') return await handleLcBrowse(url, headers);
-      if (url.pathname === '/lc/manga') return await handleLcManga(url, headers);
+      if (url.pathname === '/lc/browse') return saveToEdge(await handleLcBrowse(url, headers));
+      if (url.pathname === '/lc/manga') return saveToEdge(await handleLcManga(url, headers));
       if (url.pathname === '/lc/pages') return await handleLcPages(url, headers);
-      if (url.pathname === '/wc/browse') return await handleWcBrowse(url, headers);
-      if (url.pathname === '/wc/manga') return await handleWcManga(url, headers);
+      if (url.pathname === '/wc/browse') return saveToEdge(await handleWcBrowse(url, headers));
+      if (url.pathname === '/wc/manga') return saveToEdge(await handleWcManga(url, headers));
       if (url.pathname === '/wc/pages') return await handleWcPages(url, headers);
     } catch (err) {
       return jsonResp({ error: String((err && err.message) || err || 'Upstream error') }, headers, 502);
@@ -403,6 +442,7 @@ export default {
     const outHeaders = new Headers(upstreamRes.headers);
     for (const [k, v] of Object.entries(headers)) outHeaders.set(k, v);
     outHeaders.delete('set-cookie');
-    return new Response(upstreamRes.body, { status: upstreamRes.status, headers: outHeaders });
+    const finalMd = new Response(upstreamRes.body, { status: upstreamRes.status, headers: outHeaders });
+    return ttl > 0 ? saveToEdge(finalMd) : finalMd;
   }
 };

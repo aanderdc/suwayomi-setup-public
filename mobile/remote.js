@@ -26,8 +26,9 @@
   const WORKER_SNIPPET = `const MD_API = 'https://api.mangadex.org';
 const LC_BASE = 'https://www.leercapitulo.co';
 const WC_BASE = 'https://weebcentral.com';
-const UA = 'SuwayomiMovilBridge/3.0';
+const UA = 'SuwayomiMovilBridge/4.0';
 const WC_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+const MAX_IMG_BYTES = 25 * 1024 * 1024;
 function corsHeaders(origin) {
   return { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Accept', 'Access-Control-Max-Age': '86400', 'Vary': 'Origin' };
 }
@@ -40,6 +41,19 @@ function imgRefererForHost(hostname) {
   if (h === 'www.leercapitulo.co' || h === 'leercapitulo.co' || h.endsWith('.t34798ndc.com')) return 'https://www.leercapitulo.co/';
   if (h === 'weebcentral.com' || h.endsWith('.weebcentral.com') || h.endsWith('.compsci88.com') || h.endsWith('.planeptune.us') || h.endsWith('.lowee.us') || h.endsWith('.lastation.us') || h.endsWith('.leanbox.us') || h.endsWith('.mangasee123.com') || h.endsWith('.nep.li')) return 'https://weebcentral.com/';
   return null;
+}
+function cacheTtlForPath(p) {
+  if (p === '/img' || p === '/manga/tag') return 86400;
+  if (p === '/lc/browse' || p === '/lc/manga' || p === '/wc/browse' || p === '/wc/manga') return 240;
+  if (/^\\/manga(\\/[0-9a-f-]{36}(\\/feed)?)?$/i.test(p)) return 180;
+  return 0;
+}
+function withCors(resp, headers, st = '') {
+  const out = new Headers(resp.headers);
+  for (const [k, v] of Object.entries(headers)) out.set(k, v);
+  out.delete('set-cookie');
+  if (st) out.set('X-Bridge-Cache', st);
+  return new Response(resp.body, { status: resp.status, headers: out });
 }
 function decodeHtml(s) {
   return String(s || '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0*39;/g, "'").replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/&#(\\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10))).replace(/[\\u200e\\u200f]/g, '').replace(/\\s+/g, ' ').trim();
@@ -197,29 +211,42 @@ async function handleWcPages(url, headers) {
   return jsonResp({ pages }, headers);
 }
 export default {
-  async fetch(request) {
+  async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '*', headers = corsHeaders(origin);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     if (request.method !== 'GET') return jsonResp({ error: 'Method not allowed' }, headers, 405);
     const url = new URL(request.url);
-    if (url.pathname === '/' || url.pathname === '/health') return jsonResp({ ok: true, bridge: 'suwayomi-movil-multi', v: 3, sources: ['mangadex', 'leercapitulo', 'weebcentral'] }, headers);
+    if (url.pathname === '/' || url.pathname === '/health') return jsonResp({ ok: true, bridge: 'suwayomi-movil-multi', v: 4, sources: ['mangadex', 'leercapitulo', 'weebcentral'] }, headers);
+    const ttl = cacheTtlForPath(url.pathname);
+    const edgeCache = (ttl > 0 && typeof caches !== 'undefined' && caches.default) ? caches.default : null;
+    const cacheKey = edgeCache ? new Request(url.toString(), { method: 'GET' }) : null;
+    if (edgeCache && cacheKey) { const hit = await edgeCache.match(cacheKey); if (hit) return withCors(hit, headers, 'HIT'); }
+    const saveToEdge = (resp) => {
+      if (!edgeCache || !cacheKey || !resp || resp.status !== 200) return resp;
+      const ch = new Headers(resp.headers); ch.set('Cache-Control', 'public, max-age=' + ttl); ch.delete('set-cookie');
+      const [b1, b2] = resp.body ? resp.body.tee() : [null, null];
+      const p = edgeCache.put(cacheKey, new Response(b2, { status: resp.status, headers: ch })).catch(() => {});
+      if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
+      return new Response(b1, { status: resp.status, headers: resp.headers });
+    };
     if (url.pathname === '/img') {
       let target = null; try { target = new URL(url.searchParams.get('u') || ''); } catch {}
       const ref = target && target.protocol === 'https:' ? imgRefererForHost(target.hostname) : null;
       if (!ref) return jsonResp({ error: 'Image host not allowed' }, headers, 403);
       const imgRes = await fetch(target.toString(), { headers: { 'Referer': ref, 'User-Agent': ref === 'https://weebcentral.com/' ? WC_UA : UA } });
+      if (parseInt(imgRes.headers.get('content-length') || '0', 10) > MAX_IMG_BYTES) return jsonResp({ error: 'Image too large' }, headers, 413);
       const out = new Headers(imgRes.headers);
       for (const [k, v] of Object.entries(headers)) out.set(k, v);
       out.delete('set-cookie');
       if (imgRes.ok) out.set('Cache-Control', 'public, max-age=86400');
-      return new Response(imgRes.body, { status: imgRes.status, headers: out });
+      return saveToEdge(new Response(imgRes.body, { status: imgRes.status, headers: out }));
     }
     try {
-      if (url.pathname === '/lc/browse') return await handleLcBrowse(url, headers);
-      if (url.pathname === '/lc/manga') return await handleLcManga(url, headers);
+      if (url.pathname === '/lc/browse') return saveToEdge(await handleLcBrowse(url, headers));
+      if (url.pathname === '/lc/manga') return saveToEdge(await handleLcManga(url, headers));
       if (url.pathname === '/lc/pages') return await handleLcPages(url, headers);
-      if (url.pathname === '/wc/browse') return await handleWcBrowse(url, headers);
-      if (url.pathname === '/wc/manga') return await handleWcManga(url, headers);
+      if (url.pathname === '/wc/browse') return saveToEdge(await handleWcBrowse(url, headers));
+      if (url.pathname === '/wc/manga') return saveToEdge(await handleWcManga(url, headers));
       if (url.pathname === '/wc/pages') return await handleWcPages(url, headers);
     } catch (err) { return jsonResp({ error: String((err && err.message) || err || 'Upstream error') }, headers, 502); }
     const allowedMd = /^\\/(manga(\\/[0-9a-f-]{36}(\\/feed)?)?|manga\\/tag|at-home\\/server\\/[0-9a-f-]{36}|ping)$/i;
@@ -228,7 +255,8 @@ export default {
     const out = new Headers(res.headers);
     for (const [k, v] of Object.entries(headers)) out.set(k, v);
     out.delete('set-cookie');
-    return new Response(res.body, { status: res.status, headers: out });
+    const finalMd = new Response(res.body, { status: res.status, headers: out });
+    return ttl > 0 ? saveToEdge(finalMd) : finalMd;
   }
 };`;
 
@@ -283,7 +311,23 @@ export default {
     return u.replace(/\/+$/, '');
   }
 
+  // Caché en memoria de localStorage (evita cientos de JSON.parse en mangas largos)
+  let cfgCache = null;
+  let libCache = null;
+  let progCache = null;
+  let bmCache = null;
+  let histCache = null;
+
+  function reloadCaches() {
+    cfgCache = null;
+    libCache = null;
+    progCache = null;
+    bmCache = null;
+    histCache = null;
+  }
+
   function getConfig() {
+    if (cfgCache) return Object.assign({}, cfgCache);
     try {
       const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}') || {};
       const cfg = Object.assign({}, DEFAULT_CONFIG, saved);
@@ -292,9 +336,11 @@ export default {
       if (!['all', 'manhwa', 'manga', 'manhua'].includes(cfg.contentType)) cfg.contentType = 'all';
       cfg.workerUrl = cleanBaseUrl(cfg.workerUrl);
       cfg.suwayomiUrl = cleanBaseUrl(cfg.suwayomiUrl);
-      return cfg;
+      cfgCache = cfg;
+      return Object.assign({}, cfg);
     } catch {
-      return Object.assign({}, DEFAULT_CONFIG);
+      cfgCache = Object.assign({}, DEFAULT_CONFIG);
+      return Object.assign({}, cfgCache);
     }
   }
 
@@ -302,8 +348,9 @@ export default {
     const next = Object.assign(getConfig(), patch || {});
     next.workerUrl = cleanBaseUrl(next.workerUrl);
     next.suwayomiUrl = cleanBaseUrl(next.suwayomiUrl);
+    cfgCache = next;
     try { localStorage.setItem(CONFIG_KEY, JSON.stringify(next)); } catch { }
-    return next;
+    return Object.assign({}, next);
   }
 
   function isLocalhostOrigin() {
@@ -789,12 +836,27 @@ export default {
     return files.map((f) => proxyImageUrl(`${data.baseUrl}/${modePath}/${hash}/${f}`));
   }
 
+  async function mapWithLimit(items, limit, fn) {
+    const out = new Array(items.length);
+    let idx = 0;
+    async function run() {
+      while (idx < items.length) {
+        const cur = idx++;
+        out[cur] = await fn(items[cur], cur);
+      }
+    }
+    const workers = [];
+    for (let i = 0; i < Math.min(limit, items.length); i++) workers.push(run());
+    await Promise.all(workers);
+    return out;
+  }
+
   async function fetchLibraryUpdates(hideNsfw = false) {
     const lib = getLibraryList();
     if (!lib.length) return [];
     const langs = getLangList();
     const top = lib.slice(0, 12);
-    const groups = await Promise.all(top.map(async (m) => {
+    const groups = await mapWithLimit(top, 4, async (m) => {
       try {
         const src = detectSourceFromId(m.id);
         if (src === 'leercapitulo' || src === 'weebcentral') {
@@ -815,18 +877,21 @@ export default {
       } catch {
         return [];
       }
-    }));
+    });
     return groups.flat().sort((a, b) => (b.uploadDate || 0) - (a.uploadDate || 0)).slice(0, 50);
   }
 
-  // ---------------- Biblioteca, Historial y Progreso locales (Modo Directo) ----------------
+  // ---------------- Biblioteca, Historial y Progreso locales (Modo Directo, con caché en memoria) ----------------
   function loadLibraryMap() {
-    try { return JSON.parse(localStorage.getItem(LIB_KEY) || '{}') || {}; }
-    catch { return {}; }
+    if (libCache) return libCache;
+    try { libCache = JSON.parse(localStorage.getItem(LIB_KEY) || '{}') || {}; }
+    catch { libCache = {}; }
+    return libCache;
   }
 
   function saveLibraryMap(map) {
-    try { localStorage.setItem(LIB_KEY, JSON.stringify(map)); } catch { }
+    libCache = map || {};
+    try { localStorage.setItem(LIB_KEY, JSON.stringify(libCache)); } catch { }
   }
 
   function getLibraryList() {
@@ -877,8 +942,10 @@ export default {
   }
 
   function loadProgressMap() {
-    try { return JSON.parse(localStorage.getItem(PROG_KEY) || '{}') || {}; }
-    catch { return {}; }
+    if (progCache) return progCache;
+    try { progCache = JSON.parse(localStorage.getItem(PROG_KEY) || '{}') || {}; }
+    catch { progCache = {}; }
+    return progCache;
   }
 
   function getChapterProgress(chapterId) {
@@ -893,35 +960,45 @@ export default {
       isRead: !!(patch.isRead || cur.isRead),
       updatedAt: Date.now()
     };
+    progCache = map;
     try { localStorage.setItem(PROG_KEY, JSON.stringify(map)); } catch { }
   }
 
   function loadChapBookmarks() {
-    try { return JSON.parse(localStorage.getItem(BOOKMARKS_KEY) || '{}') || {}; }
-    catch { return {}; }
+    if (bmCache) return bmCache;
+    try { bmCache = JSON.parse(localStorage.getItem(BOOKMARKS_KEY) || '{}') || {}; }
+    catch { bmCache = {}; }
+    return bmCache;
   }
 
   function toggleChapterBookmark(chapterId, val) {
     const map = loadChapBookmarks();
     if (val) map[String(chapterId)] = true;
     else delete map[String(chapterId)];
+    bmCache = map;
     try { localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(map)); } catch { }
   }
 
-  function getHistory() {
+  function loadRawHistory() {
+    if (histCache) return histCache;
     try {
       const arr = JSON.parse(localStorage.getItem(HIST_KEY) || '[]');
-      return Array.isArray(arr)
-        ? arr.map((h) => Object.assign({}, h, { thumbnailUrl: ensureProxiedIfWorker(h.thumbnailUrl || '') })).sort((a, b) => (b.readAt || 0) - (a.readAt || 0))
-        : [];
+      histCache = Array.isArray(arr) ? arr : [];
     } catch {
-      return [];
+      histCache = [];
     }
+    return histCache;
+  }
+
+  function getHistory() {
+    return loadRawHistory()
+      .map((h) => Object.assign({}, h, { thumbnailUrl: ensureProxiedIfWorker(h.thumbnailUrl || '') }))
+      .sort((a, b) => (b.readAt || 0) - (a.readAt || 0));
   }
 
   function recordHistory(entry) {
     if (!entry || !entry.mangaId || !entry.chapterId) return;
-    let list = getHistory().filter((x) => String(x.mangaId) !== String(entry.mangaId));
+    let list = loadRawHistory().filter((x) => String(x.mangaId) !== String(entry.mangaId));
     list.unshift({
       mangaId: String(entry.mangaId),
       mangaTitle: entry.mangaTitle || 'Manga',
@@ -933,15 +1010,17 @@ export default {
       isRead: !!entry.isRead,
       readAt: Date.now()
     });
-    try { localStorage.setItem(HIST_KEY, JSON.stringify(list.slice(0, 80))); } catch { }
+    histCache = list.slice(0, 80);
+    try { localStorage.setItem(HIST_KEY, JSON.stringify(histCache)); } catch { }
   }
 
   function removeHistoryManga(mangaId) {
-    const list = getHistory().filter((x) => String(x.mangaId) !== String(mangaId));
-    try { localStorage.setItem(HIST_KEY, JSON.stringify(list)); } catch { }
+    histCache = loadRawHistory().filter((x) => String(x.mangaId) !== String(mangaId));
+    try { localStorage.setItem(HIST_KEY, JSON.stringify(histCache)); } catch { }
   }
 
   function clearHistory() {
+    histCache = [];
     try { localStorage.setItem(HIST_KEY, '[]'); } catch { }
   }
 
@@ -963,10 +1042,13 @@ export default {
       if (res.ok) {
         const j = await res.json().catch(() => ({}));
         if (j && j.ok) {
+          if ((j.v || 1) >= 4) {
+            return { ok: true, version: j.v, message: 'Puente v4 operativo (Multi-fuente + caché rápida Cloudflare)' };
+          }
           if ((j.v || 1) >= 3) {
             return { ok: true, version: j.v, message: 'Puente v3 operativo (MangaDex + LeerCapitulo ES + WeebCentral EN)' };
           }
-          return { ok: true, version: j.v || 1, message: `Puente v${j.v || 1} activo. Actualízalo a v3 en Cloudflare para portadas mejoradas, LeerCapitulo y WeebCentral.` };
+          return { ok: true, version: j.v || 1, message: `Puente v${j.v || 1} activo. Actualízalo a v4 en Cloudflare para portadas mejoradas, LeerCapitulo, WeebCentral y caché rápida.` };
         }
       }
       // Fallback directo a api.mangadex.org en localhost
@@ -1010,6 +1092,7 @@ export default {
   window.SuwayomiRemote = {
     SOURCES_META,
     WORKER_SNIPPET,
+    reloadCaches,
     cleanBaseUrl,
     getConfig,
     saveConfig,

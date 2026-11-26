@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = 'v18';
+  const APP_VERSION = 'v19';
   const API_URL = '/api/graphql';
   const VAULT_API_URL = '/movil/__vault__/api/graphql';
   const PREFS_KEY = 'suwayomi_mobile_prefs_v3';
@@ -347,6 +347,29 @@
       .replace(/"/g, '&quot;');
   }
 
+  function debounce(fn, ms = 180) {
+    let timer = null;
+    return function debounced(...args) {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn.apply(this, args), ms);
+    };
+  }
+
+  async function mapWithConcurrency(items, limit, fn) {
+    const out = new Array(items.length);
+    let idx = 0;
+    async function worker() {
+      while (idx < items.length) {
+        const cur = idx++;
+        out[cur] = await fn(items[cur], cur);
+      }
+    }
+    const runners = [];
+    for (let i = 0; i < Math.min(limit, items.length); i++) runners.push(worker());
+    await Promise.all(runners);
+    return out;
+  }
+
   function formatDate(ts) {
     const n = Number(ts);
     if (!n) return '';
@@ -646,7 +669,7 @@
       const srcs = inVault
         ? state.vaultSources
         : (await ensureAllSourcesLoaded()).filter((s) => (!Extras || !Extras.isSourceHidden(s.id)) && !isSourceBlockedNsfw(s, false));
-      const groups = await Promise.all(srcs.slice(0, 8).map(async (src) => {
+      const groups = await mapWithConcurrency(srcs.slice(0, 8), 4, async (src) => {
         try {
           const data = await gql(M_SOURCE_MANGAS, {
             input: { source: String(src.id), type: 'SEARCH', page: 1, query: cleanTag }
@@ -658,7 +681,7 @@
         } catch {
           return { source: src, mangas: [] };
         }
-      }));
+      });
       const hits = groups.filter((g) => g.mangas.length > 0);
       const wrap = $('tagRemoteWrap');
       if (!wrap) return;
@@ -871,7 +894,7 @@
     if (!query) { renderVault(); return; }
     const wrap = $('vaultSourcesBody');
     if (wrap) wrap.innerHTML = `<div class="empty-state"><div class="spinner"></div><p>Buscando "${esc(query)}" en ${state.vaultSources.length} fuente(s) de la bóveda...</p></div>`;
-    const res = await Promise.all(state.vaultSources.map(async (src) => {
+    const res = await mapWithConcurrency(state.vaultSources, 4, async (src) => {
       try {
         const data = await gql(M_SOURCE_MANGAS, {
           input: { source: String(src.id), type: 'SEARCH', page: 1, query }
@@ -880,7 +903,7 @@
       } catch {
         return { source: src, mangas: [] };
       }
-    }));
+    });
     state.vaultGlobalResults = res.filter((x) => x.mangas.length > 0);
     renderVault();
   }
@@ -1092,7 +1115,10 @@
 
     if (state.vaultTab === 'mangas') {
       const inp = $('vaultSearchInput');
-      if (inp) inp.addEventListener('input', (e) => { state.vaultSearch = e.target.value; renderVault(); });
+      if (inp) {
+        const debVault = debounce(() => renderVault(), 180);
+        inp.addEventListener('input', (e) => { state.vaultSearch = e.target.value; debVault(); });
+      }
       const ref = $('vaultRefreshLib');
       if (ref) ref.addEventListener('click', async () => { await loadVaultData(); renderVault(); });
       vaultView.querySelectorAll('[data-vmanga-id]').forEach((card) => {
@@ -2155,9 +2181,10 @@
       </div>
     `;
 
+    const debLibSearch = debounce(() => drawLibraryGrid(), 180);
     $('libSearchInput').addEventListener('input', (e) => {
       state.librarySearch = e.target.value;
-      drawLibraryGrid();
+      debLibSearch();
     });
     $('libSortSelect').addEventListener('change', (e) => {
       state.librarySort = e.target.value;
@@ -2701,7 +2728,12 @@
   }
 
   // ---------------- EXPLORAR + BÚSQUEDA GLOBAL + FILTRO POR TAGS ----------------
+  let globalSearchReqSeq = 0;
+  let directExploreReqSeq = 0;
+  let sourceReqSeq = 0;
+
   async function runGlobalSearch(query, tag = '') {
+    const reqId = ++globalSearchReqSeq;
     state.globalSearchQuery = query;
     state.globalSearchTag = tag;
     state.globalSearchResults = [];
@@ -2710,7 +2742,8 @@
 
     const publicSources = state.sources.filter((s) => (!Extras || !Extras.isSourceHidden(s.id)) && !isSourceBlockedNsfw(s, false));
     mainContent.innerHTML = `<div class="empty-state"><div class="spinner"></div><p>Buscando "${esc(effectiveQuery)}" en ${publicSources.length} fuente(s)...</p></div>`;
-    const results = await Promise.all(publicSources.map(async (src) => {
+    const results = await mapWithConcurrency(publicSources, 4, async (src) => {
+      if (reqId !== globalSearchReqSeq) return { source: src, mangas: [] };
       try {
         const data = await gql(M_SOURCE_MANGAS, {
           input: { source: String(src.id), type: 'SEARCH', page: 1, query: effectiveQuery }
@@ -2725,7 +2758,8 @@
       } catch {
         return { source: src, mangas: [] };
       }
-    }));
+    });
+    if (reqId !== globalSearchReqSeq) return;
     state.globalSearchResults = results.filter((r) => r.mangas.length > 0);
     drawGlobalSearchResults();
   }
@@ -2892,6 +2926,7 @@
   }
 
   async function loadDirectExplorePage() {
+    const reqId = ++directExploreReqSeq;
     if (state.remotePage === 1) mainContent.innerHTML = '<div class="spinner"></div>';
     try {
       const cfg = Remote.getConfig();
@@ -2904,12 +2939,14 @@
         page: state.remotePage,
         hideNsfw: shouldHideNsfw(false)
       });
+      if (reqId !== directExploreReqSeq || !isDirectMode() || state.tab !== 'explore') return;
       const safeMangas = (res.mangas || []).filter((m) => !isMangaBlockedNsfw(m, false));
       state.remoteHasNext = !!res.hasNextPage;
       state.remoteMangas = state.remotePage === 1 ? safeMangas : state.remoteMangas.concat(safeMangas);
       setOfflineMode(false);
       drawDirectExploreGrid();
     } catch (err) {
+      if (reqId !== directExploreReqSeq || !isDirectMode() || state.tab !== 'explore') return;
       const isUpgrade = err && err.message === 'WORKER_UPGRADE_NEEDED';
       const msg = isUpgrade
         ? 'Tu Cloudflare Worker todavía tiene una versión anterior. Pega el código Worker v3 en Cloudflare (tarda 10 seg) para activar LeerCapitulo (ES), WeebCentral (EN) y portadas mejoradas.'
@@ -3139,17 +3176,20 @@
   }
 
   async function loadSourcePage() {
+    const reqId = ++sourceReqSeq;
     if (state.sourcePage === 1) mainContent.innerHTML = '<div class="spinner"></div>';
     try {
       const input = { source: String(state.activeSource.id), type: state.sourceMode, page: state.sourcePage };
       if (state.sourceMode === 'SEARCH') input.query = state.sourceQuery;
       const data = await gql(M_SOURCE_MANGAS, { input });
+      if (reqId !== sourceReqSeq || !state.activeSource || state.tab !== 'explore') return;
       const res = data.fetchSourceManga || { mangas: [], hasNextPage: false };
       const safeMangas = (res.mangas || []).filter((m) => !isMangaBlockedNsfw(m, false));
       state.sourceHasNext = !!res.hasNextPage;
       state.sourceMangas = state.sourcePage === 1 ? safeMangas : state.sourceMangas.concat(safeMangas);
       drawSourceGrid();
     } catch {
+      if (reqId !== sourceReqSeq) return;
       setOfflineMode(true);
       state.activeSource = null;
       renderExplore();
@@ -3253,7 +3293,7 @@
             </div>
             <div style="display:flex;gap:8px;margin-top:8px">
               <button id="remWorkerSaveBtn" class="primary-btn" type="button" style="flex:1;padding:9px 10px;font-size:13px">Guardar y probar</button>
-              <button id="remWorkerCodeBtn" class="secondary-btn" type="button" style="padding:9px 10px;font-size:12.5px">Código Worker v3</button>
+              <button id="remWorkerCodeBtn" class="secondary-btn" type="button" style="padding:9px 10px;font-size:12.5px">Código Worker v4</button>
             </div>
             <div id="remWorkerStatus" class="remote-status"></div>
           </div>
@@ -3649,6 +3689,7 @@
             }
           }
           state.prefs = loadPrefs();
+          if (Remote && Remote.reloadCaches) Remote.reloadCaches();
           updateRemoteBanner();
           showToast(`Importados ${count} bloques de configuración`);
           renderSettings();
@@ -3845,7 +3886,7 @@
         String(s.id) !== String(manga.sourceId) &&
         (state.vaultOpen ? true : ((!Extras || !Extras.isSourceHidden(s.id)) && !isSourceBlockedNsfw(s, false)))
       );
-      const res = await Promise.all(others.map(async (src) => {
+      const res = await mapWithConcurrency(others, 4, async (src) => {
         try {
           const r = await gql(M_SOURCE_MANGAS, {
             input: { source: String(src.id), type: 'SEARCH', page: 1, query: manga.title }
@@ -3854,7 +3895,7 @@
         } catch {
           return { source: src, mangas: [] };
         }
-      }));
+      });
       const hits = res.filter((x) => x.mangas.length > 0);
 
       openAppSheet(`
