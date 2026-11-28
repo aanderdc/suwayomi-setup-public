@@ -83,7 +83,7 @@ suwayomi-setup-public/
 - **Modo remoto sin PC (en Ajustes):**
   - **Directo (sin PC)** vía tu propio Cloudflare Worker gratuito ([`cloudflare-worker/`](cloudflare-worker/README.md)): busca y lee **Mangas, Manhwas y Manhuas** desde **MangaDex (`ES/EN`)**, **LeerCapitulo (`ES`)** y **WeebCentral (`EN`)** con tu PC apagado.
   - **Suwayomi remoto (URL):** conecta con otro Suwayomi alojado en una Raspberry Pi o VPS 24/7.
-- **Privacidad:** bloqueo con PIN de 4 dígitos, borrado de historial (total o por manga), exportar/importar ajustes JSON y **Bóveda oculta aislada** (5 toques en *Biblioteca*, instancia separada `Tachidesk-Vault` que no deja rastro en `localhost:4567/history` ni `/browse?tab=sources`, con su propio historial privado).
+- **Privacidad:** bloqueo con PIN de 4 dígitos, borrado de historial (total o por manga), exportar/importar ajustes JSON y **Bóveda oculta aislada** (instancia separada `Tachidesk-Vault` que no deja rastro en `localhost:4567/history` ni `/browse?tab=sources`, con su propio PIN e historial privado).
 
 ---
 

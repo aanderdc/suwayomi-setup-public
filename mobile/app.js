@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = 'v19';
+  const APP_VERSION = 'v20';
   const API_URL = '/api/graphql';
   const VAULT_API_URL = '/movil/__vault__/api/graphql';
   const PREFS_KEY = 'suwayomi_mobile_prefs_v3';
@@ -3477,7 +3477,7 @@
             <button class="seg-btn ${!p.filterNsfw ? 'active' : ''}" data-pref-nsfw="0">Desactivado</button>
             <button class="seg-btn ${p.filterNsfw ? 'active' : ''}" data-pref-nsfw="1">Activado (ocultar +18)</button>
           </div>
-          <div style="font-size:11.5px;color:var(--muted);margin-top:5px">Oculta contenido +18 en búsquedas, Explorar, etiquetas y Extensiones. No afecta a tu Bóveda oculta.</div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:5px">Oculta contenido +18 en búsquedas, Explorar, etiquetas y Extensiones.</div>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:10px">
           <button id="pinToggleBtn" class="secondary-btn" type="button" style="flex:1">
@@ -3497,11 +3497,8 @@
         <button id="settingsUpdateAppBtn" class="secondary-btn" type="button" style="width:100%;margin-bottom:10px;color:#93c5fd;border-color:rgba(56,189,248,0.4)">
           Actualizar app ahora (${APP_VERSION})
         </button>
-        <button id="settingsClearHistBtn" class="secondary-btn" type="button" style="width:100%;margin-bottom:10px;color:#ff8690;border-color:rgba(255,77,90,0.35)">
+        <button id="settingsClearHistBtn" class="secondary-btn" type="button" style="width:100%;color:#ff8690;border-color:rgba(255,77,90,0.35)">
           Borrar historial de lectura
-        </button>
-        <button id="settingsVaultBtn" class="secondary-btn" type="button" style="width:100%;font-size:12px;color:var(--muted)">
-          Bóveda privada (acceso rápido: 5 toques en "Biblioteca")
         </button>
       </div>
     `;
@@ -3816,8 +3813,6 @@
     if (instBtn) instBtn.addEventListener('click', triggerInstallApp);
     const clrHistBtn = $('settingsClearHistBtn');
     if (clrHistBtn) clrHistBtn.addEventListener('click', () => runClearHistory(0, ''));
-    const vaultBtn = $('settingsVaultBtn');
-    if (vaultBtn) vaultBtn.addEventListener('click', requestOpenVault);
   }
 
   // ---------------- DETALLE DE MANGA (Categorías, Migración, Marcadores, Descargas) ----------------
